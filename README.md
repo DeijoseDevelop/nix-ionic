@@ -31,12 +31,10 @@ npm install @deijose/nix-ionic @deijose/nix-js @ionic/core
 
 ## Quick start
 
-### 1. Initialize Ionic in `main.ts`
+### 1. Initialize and Mount in `main.ts`
 
 ```typescript
-import { defineCustomElements } from "@ionic/core/loader";
-defineCustomElements();
-
+// 1. Core Styles (order matters)
 import "@ionic/core/css/core.css";
 import "@ionic/core/css/normalize.css";
 import "@ionic/core/css/structure.css";
@@ -44,28 +42,33 @@ import "@ionic/core/css/typography.css";
 import "@ionic/core/css/padding.css";
 import "@ionic/core/css/flex-utils.css";
 import "@ionic/core/css/display.css";
-```
+import "./style.css";
 
-### 2. Define your routes
-
-```typescript
+// 2. Framework Imports
 import { NixComponent, html, mount } from "@deijose/nix-js";
-import { IonRouterOutlet } from "@deijose/nix-ionic";
+import { setupNixIonic, IonRouterOutlet } from "@deijose/nix-ionic";
+
+// 3. Pages
 import { HomePage }   from "./pages/HomePage";
 import { DetailPage } from "./pages/DetailPage";
 
+// Configure and inject Ionic Core
+setupNixIonic();
+
+// 4. Router Configuration
 const outlet = new IonRouterOutlet([
   { path: "/",           component: (ctx) => new HomePage(ctx)   },
-  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) },
-  { path: "/profile",    component: (ctx) => ProfilePage(ctx)    },
+  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) }
 ]);
 
+// 5. App Component
 class App extends NixComponent {
-  render() {
+  override render() {
     return html`<ion-app>${outlet}</ion-app>`;
   }
 }
 
+// 6. Bootstrap
 mount(new App(), "#app");
 ```
 
@@ -429,11 +432,7 @@ my-app/
 ### `main.ts` — entry point
 
 ```typescript
-// ── Ionic loader ─────────────────────────────────────────────────────────────
-import { defineCustomElements } from "@ionic/core/loader";
-defineCustomElements();
-
-// ── Ionic CSS (order matters) ─────────────────────────────────────────────────
+// 1. Core Styles (order matters)
 import "@ionic/core/css/core.css";
 import "@ionic/core/css/normalize.css";
 import "@ionic/core/css/structure.css";
@@ -441,31 +440,33 @@ import "@ionic/core/css/typography.css";
 import "@ionic/core/css/padding.css";
 import "@ionic/core/css/flex-utils.css";
 import "@ionic/core/css/display.css";
-
-// ── App styles ────────────────────────────────────────────────────────────────
 import "./style.css";
 
-// ── App ───────────────────────────────────────────────────────────────────────
+// 2. Framework Imports
 import { NixComponent, html, mount } from "@deijose/nix-js";
-import type { NixTemplate } from "@deijose/nix-js";
-import { IonRouterOutlet } from "@deijose/nix-ionic";
+import { setupNixIonic, IonRouterOutlet } from "@deijose/nix-ionic";
 
-import { HomePage }    from "./pages/HomePage";
-import { DetailPage }  from "./pages/DetailPage";
-import { ProfilePage } from "./pages/ProfilePage";
+// 3. Pages
+import { HomePage }   from "./pages/HomePage";
+import { DetailPage } from "./pages/DetailPage";
 
+// Configure and inject Ionic Core
+setupNixIonic();
+
+// 4. Router Configuration
 const outlet = new IonRouterOutlet([
   { path: "/",           component: (ctx) => new HomePage(ctx)   },
-  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) },
-  { path: "/profile",    component: (ctx) => ProfilePage(ctx)    },
+  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) }
 ]);
 
+// 5. App Component
 class App extends NixComponent {
-  override render(): NixTemplate {
+  override render() {
     return html`<ion-app>${outlet}</ion-app>`;
   }
 }
 
+// 6. Bootstrap
 mount(new App(), "#app");
 ```
 
