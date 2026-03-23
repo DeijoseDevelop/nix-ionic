@@ -60,9 +60,6 @@ export function setupNixIonic(
     defineIonIcon,
   ];
 
-  for (const def of coreComponents) {
-    def();
-  }
   for (let i = 0; i < coreComponents.length; i++) {
     const def = coreComponents[i];
     def();
