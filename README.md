@@ -29,6 +29,92 @@ npm install @deijose/nix-ionic @deijose/nix-js @ionic/core
 
 ---
 
+## Modular component loading (v0.3.0+)
+
+Starting with v0.3.0, `setupNixIonic()` only registers **6 minimal core components** needed for routing (`ion-app`, `ion-router`, `ion-route`, `ion-router-outlet`, `ion-back-button`, `ion-icon`). All other components are loaded **on demand**.
+
+This means you **only pay for what you use**, reducing your initial bundle size dramatically.
+
+### Three ways to load components
+
+#### 1. Individual components (maximum tree-shaking) ✅
+
+Import only the exact components you need:
+
+```typescript
+import { setupNixIonic } from "@deijose/nix-ionic";
+import {
+  defineIonHeader,
+  defineIonToolbar,
+  defineIonTitle,
+  defineIonContent,
+  defineIonButton,
+} from "@deijose/nix-ionic/components";
+
+setupNixIonic({
+  components: [
+    defineIonHeader,
+    defineIonToolbar,
+    defineIonTitle,
+    defineIonContent,
+    defineIonButton,
+  ],
+});
+```
+
+#### 2. Category bundles (balanced approach)
+
+Load components by category:
+
+```typescript
+import { setupNixIonic } from "@deijose/nix-ionic";
+import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
+import { buttonComponents } from "@deijose/nix-ionic/bundles/buttons";
+import { listComponents } from "@deijose/nix-ionic/bundles/lists";
+
+setupNixIonic({
+  components: [...layoutComponents, ...buttonComponents, ...listComponents],
+});
+```
+
+**Available bundles:**
+
+| Bundle | Import path | Components |
+|---|---|---|
+| Layout | `@deijose/nix-ionic/bundles/layout` | header, toolbar, title, content, footer, buttons |
+| Navigation | `@deijose/nix-ionic/bundles/navigation` | menu, menu-button |
+| Forms | `@deijose/nix-ionic/bundles/forms` | input, textarea, checkbox, toggle, select, select-option, radio, radio-group, range, searchbar |
+| Lists | `@deijose/nix-ionic/bundles/lists` | list, list-header, item, item-divider, item-sliding, item-options, item-option, label, note, card, card-header, card-title, card-subtitle, card-content |
+| Feedback | `@deijose/nix-ionic/bundles/feedback` | spinner, progress-bar, skeleton-text, badge, avatar, thumbnail |
+| Buttons | `@deijose/nix-ionic/bundles/buttons` | button, fab, fab-button, fab-list, ripple-effect |
+| Overlays | `@deijose/nix-ionic/bundles/overlays` | modal, popover, toast, alert |
+| **All** | `@deijose/nix-ionic/bundles/all` | All of the above |
+
+#### 3. All components (same as v0.2.x)
+
+If you want backward-compatible behavior with all components loaded at once:
+
+```typescript
+import { setupNixIonic } from "@deijose/nix-ionic";
+import { allComponents } from "@deijose/nix-ionic/bundles/all";
+
+setupNixIonic({ components: allComponents });
+```
+
+### Migration from v0.2.x
+
+```diff
+  import { setupNixIonic } from "@deijose/nix-ionic";
++ import { allComponents } from "@deijose/nix-ionic/bundles/all";
+
+- setupNixIonic();
++ setupNixIonic({ components: allComponents });
+```
+
+Or better yet, import only what you actually use for a smaller bundle.
+
+---
+
 ## Quick start
 
 ### 1. Initialize and Mount in `main.ts`
@@ -47,13 +133,17 @@ import "./style.css";
 // 2. Framework Imports
 import { NixComponent, html, mount } from "@deijose/nix-js";
 import { setupNixIonic, IonRouterOutlet } from "@deijose/nix-ionic";
+import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
+import { defineIonButton } from "@deijose/nix-ionic/components";
 
 // 3. Pages
 import { HomePage }   from "./pages/HomePage";
 import { DetailPage } from "./pages/DetailPage";
 
-// Configure and inject Ionic Core
-setupNixIonic();
+// Configure and inject Ionic Core (only the components you use)
+setupNixIonic({
+  components: [...layoutComponents, defineIonButton],
+});
 
 // 4. Router Configuration
 const outlet = new IonRouterOutlet([
@@ -291,6 +381,17 @@ interface PageContext {
 
 ## API Reference
 
+### `setupNixIonic(options?)`
+
+```typescript
+setupNixIonic(options?: {
+  iconAssetPath?: string;
+  components?: ComponentDefiner[];
+}): void
+```
+
+Initializes Ionic Core and registers the minimal routing components. Pass additional components via `options.components`.
+
 ### `IonRouterOutlet`
 
 ```typescript
@@ -352,6 +453,7 @@ useIonViewDidLeave(lc:  PageLifecycle, fn: () => void): void
 | `ion-back-button` | native | wrapper | wrapper |
 | Lifecycle hooks | directive | hooks | `IonPage` / composables |
 | Navigation API | `NavController` | `useHistory` | `useRouter()` |
+| Modular loading | ❌ | ❌ | ✅ tree-shakeable |
 
 
 ## Project setup
@@ -445,13 +547,17 @@ import "./style.css";
 // 2. Framework Imports
 import { NixComponent, html, mount } from "@deijose/nix-js";
 import { setupNixIonic, IonRouterOutlet } from "@deijose/nix-ionic";
+import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
+import { buttonComponents } from "@deijose/nix-ionic/bundles/buttons";
 
 // 3. Pages
 import { HomePage }   from "./pages/HomePage";
 import { DetailPage } from "./pages/DetailPage";
 
 // Configure and inject Ionic Core
-setupNixIonic();
+setupNixIonic({
+  components: [...layoutComponents, ...buttonComponents],
+});
 
 // 4. Router Configuration
 const outlet = new IonRouterOutlet([

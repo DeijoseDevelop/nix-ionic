@@ -1,6 +1,6 @@
 {
   "name": "@deijose/nix-ionic",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Ionic lifecycle & router bridge for Nix.js",
   "license": "MIT",
   "author": "Deiver Vasquez",
@@ -31,7 +31,9 @@
     "typescript",
     "micro-framework",
     "ui",
-    "frontend"
+    "frontend",
+    "tree-shaking",
+    "modular"
   ],
   "exports": {
     ".": {
@@ -42,6 +44,96 @@
       "require": {
         "types": "./dist/lib/index.d.ts",
         "default": "./dist/lib/nix-ionic.cjs"
+      }
+    },
+    "./components": {
+      "import": {
+        "types": "./dist/lib/components.d.ts",
+        "default": "./dist/lib/components.js"
+      },
+      "require": {
+        "types": "./dist/lib/components.d.ts",
+        "default": "./dist/lib/components.cjs"
+      }
+    },
+    "./bundles/layout": {
+      "import": {
+        "types": "./dist/lib/bundles/layout.d.ts",
+        "default": "./dist/lib/bundles/layout.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/layout.d.ts",
+        "default": "./dist/lib/bundles/layout.cjs"
+      }
+    },
+    "./bundles/forms": {
+      "import": {
+        "types": "./dist/lib/bundles/forms.d.ts",
+        "default": "./dist/lib/bundles/forms.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/forms.d.ts",
+        "default": "./dist/lib/bundles/forms.cjs"
+      }
+    },
+    "./bundles/lists": {
+      "import": {
+        "types": "./dist/lib/bundles/lists.d.ts",
+        "default": "./dist/lib/bundles/lists.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/lists.d.ts",
+        "default": "./dist/lib/bundles/lists.cjs"
+      }
+    },
+    "./bundles/feedback": {
+      "import": {
+        "types": "./dist/lib/bundles/feedback.d.ts",
+        "default": "./dist/lib/bundles/feedback.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/feedback.d.ts",
+        "default": "./dist/lib/bundles/feedback.cjs"
+      }
+    },
+    "./bundles/buttons": {
+      "import": {
+        "types": "./dist/lib/bundles/buttons.d.ts",
+        "default": "./dist/lib/bundles/buttons.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/buttons.d.ts",
+        "default": "./dist/lib/bundles/buttons.cjs"
+      }
+    },
+    "./bundles/overlays": {
+      "import": {
+        "types": "./dist/lib/bundles/overlays.d.ts",
+        "default": "./dist/lib/bundles/overlays.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/overlays.d.ts",
+        "default": "./dist/lib/bundles/overlays.cjs"
+      }
+    },
+    "./bundles/navigation": {
+      "import": {
+        "types": "./dist/lib/bundles/navigation.d.ts",
+        "default": "./dist/lib/bundles/navigation.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/navigation.d.ts",
+        "default": "./dist/lib/bundles/navigation.cjs"
+      }
+    },
+    "./bundles/all": {
+      "import": {
+        "types": "./dist/lib/bundles/all.d.ts",
+        "default": "./dist/lib/bundles/all.js"
+      },
+      "require": {
+        "types": "./dist/lib/bundles/all.d.ts",
+        "default": "./dist/lib/bundles/all.cjs"
       }
     }
   },

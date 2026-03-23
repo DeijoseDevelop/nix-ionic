@@ -8,6 +8,8 @@ import { resolve } from "path";
 // Produces:
 //   dist/lib/nix-ionic.js    — ES module  (primary)
 //   dist/lib/nix-ionic.cjs   — CommonJS   (legacy Node.js / bundlers)
+//   dist/lib/components.js   — Individual component re-exports
+//   dist/lib/bundles/*.js    — Category bundles
 //   dist/lib/*.d.ts          — Type declarations (generated separately by tsc)
 
 export default defineConfig({
@@ -21,15 +23,26 @@ export default defineConfig({
         sourcemap: true,
 
         lib: {
-            entry: resolve("src/index.ts"),
-            name: "NixIonic",
+            entry: {
+                "nix-ionic": resolve("src/index.ts"),
+                "components": resolve("src/components.ts"),
+                "bundles/layout": resolve("src/bundles/layout.ts"),
+                "bundles/forms": resolve("src/bundles/forms.ts"),
+                "bundles/lists": resolve("src/bundles/lists.ts"),
+                "bundles/feedback": resolve("src/bundles/feedback.ts"),
+                "bundles/buttons": resolve("src/bundles/buttons.ts"),
+                "bundles/overlays": resolve("src/bundles/overlays.ts"),
+                "bundles/navigation": resolve("src/bundles/navigation.ts"),
+                "bundles/all": resolve("src/bundles/all.ts"),
+            },
             formats: ["es", "cjs"],
-            fileName: (format) => (format === "cjs" ? "nix-ionic.cjs" : "nix-ionic.js"),
+            fileName: (format, entryName) =>
+                format === "cjs" ? `${entryName}.cjs` : `${entryName}.js`,
         },
 
         rollupOptions: {
             // nix-ionic depends on nix-js
-            external: ["@deijose/nix-js", /^@ionic\/core.*/],
+            external: ["@deijose/nix-js", /^@ionic\/core.*/, /^ionicons.*/],
             output: {
                 // Preserve module structure for better tree-shaking in ES builds
                 preserveModules: false,

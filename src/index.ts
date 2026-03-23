@@ -8,7 +8,7 @@ export {
   type PageLifecycle,
 } from "./lifecycle";
 
-export { setupNixIonic } from "./setup";
+export { setupNixIonic, type ComponentDefiner } from "./setup";
 
 export {
   IonRouterOutlet,
