@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@deijose/nix-ionic.svg)](https://www.npmjs.com/package/@deijose/nix-ionic)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-> Ionic bridge for [Nix.js](https://nix-js-landing.vercel.app/) — routing, lifecycle hooks, and navigation powered by the official `ion-router` API.
+> Ionic bridge for [Nix.js](https://nix-js.dev/) — routing, lifecycle hooks, and navigation powered by the official `ion-router` API.
 
 ---
 
