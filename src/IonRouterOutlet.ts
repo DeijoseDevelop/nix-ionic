@@ -84,13 +84,74 @@ export interface RouteDefinition {
 }
 
 // --------------------------------------------------------------------------
-// Entrada de caché — modelo Angular
+// Entrada de caché
 // --------------------------------------------------------------------------
 
 interface CachedView {
-  pageEl:   HTMLElement;       // El ion-page real, persiste en memoria
-  lc:       PageLifecycle;     // Signals de lifecycle, misma instancia siempre
-  cleanup:  () => void;        // Destrucción real: signals + render + onUnmount
+  pageEl:  HTMLElement;
+  lc:      PageLifecycle;
+  cleanup: () => void;
+}
+
+// --------------------------------------------------------------------------
+// Helpers
+// --------------------------------------------------------------------------
+
+/**
+ * Clases CSS que Ionic aplica durante transiciones de salida.
+ * Si la página sale animada, estas clases quedan en el elemento
+ * y lo dejan invisible cuando se re-adjunta desde la caché.
+ */
+const IONIC_HIDDEN_CLASSES = [
+  "ion-page-hidden",
+  "ion-page-invisible",
+  "can-go-back",
+];
+
+/**
+ * Limpia el estado de animación/visibilidad que Ionic pudo haber aplicado
+ * al elemento durante la transición de salida.
+ * Se llama tanto al guardar en caché como al recuperar de caché.
+ */
+function _resetIonicPageState(el: HTMLElement): void {
+  // Clases de visibilidad que Ionic gestiona
+  el.classList.remove(...IONIC_HIDDEN_CLASSES);
+
+  // Estilos inline que las animaciones de Ionic dejan (opacity, transform, etc.)
+  // Solo limpiamos las propiedades que Ionic usa — no el style completo
+  el.style.removeProperty("display");
+  el.style.removeProperty("visibility");
+  el.style.removeProperty("opacity");
+  el.style.removeProperty("transform");
+  el.style.removeProperty("animation");
+  el.style.removeProperty("transition");
+  el.style.removeProperty("pointer-events");
+  el.style.removeProperty("z-index");
+}
+
+/**
+ * Determina si una ruta tiene segmentos dinámicos (:param).
+ */
+function _hasDynamicSegments(path: string): boolean {
+  return path.includes(":");
+}
+
+/**
+ * Construye la cache key para una vista.
+ *
+ * Rutas estáticas (/home):         key = "/home"
+ * Rutas dinámicas (/events/:id):   key = "/events/:id?id=abc"
+ *   → una instancia POR combinación de params única
+ */
+function _buildCacheKey(routePath: string, params: Record<string, string>): string {
+  if (!_hasDynamicSegments(routePath) || Object.keys(params).length === 0) {
+    return routePath;
+  }
+  const sortedParams = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join("&");
+  return `${routePath}?${sortedParams}`;
 }
 
 // --------------------------------------------------------------------------
@@ -99,11 +160,6 @@ interface CachedView {
 
 export class IonRouterOutlet extends NixComponent {
   private routes: RouteDefinition[];
-
-  /**
-   * Caché de vistas — igual que Angular mantiene instancias vivas.
-   * Clave: path de la ruta (e.g. "/home", "/profile/:id")
-   */
   private _viewCache = new Map<string, CachedView>();
 
   constructor(routes: RouteDefinition[]) {
@@ -122,11 +178,6 @@ export class IonRouterOutlet extends NixComponent {
     return `nix-route-${clean}`;
   }
 
-  /**
-   * Crea la instancia del componente y la monta en pageEl.
-   * Solo se llama UNA vez por ruta — igual que Angular crea
-   * el componente una sola vez.
-   */
   private _createAndMount(
     pageEl:   HTMLElement,
     routeDef: RouteDefinition,
@@ -139,22 +190,16 @@ export class IonRouterOutlet extends NixComponent {
       typeof (pageNode as NixComponent).render === "function"
     ) {
       const comp = pageNode as NixComponent;
-
-      // onInit: una sola vez, igual que ngOnInit en Angular
       comp.onInit?.();
-
       const renderCleanup = comp.render()._render(pageEl, null);
       const mountRet      = comp.onMount?.();
-
-      // Retorna el destructor real
       return () => {
         comp.onUnmount?.();
         if (typeof mountRet === "function") mountRet();
         renderCleanup();
       };
     } else {
-      const renderCleanup = (pageNode as NixTemplate)._render(pageEl, null);
-      return renderCleanup;
+      return (pageNode as NixTemplate)._render(pageEl, null);
     }
   }
 
@@ -174,7 +219,6 @@ export class IonRouterOutlet extends NixComponent {
 
       _render(parent: Node, before: Node | null): () => void {
 
-        // ── ion-router ────────────────────────────────────────────────
         const routerEl = document.createElement("ion-router");
         routerEl.setAttribute("use-hash", "false");
 
@@ -187,18 +231,10 @@ export class IonRouterOutlet extends NixComponent {
             routerEl.appendChild(routeEl);
           });
 
-        // ── ion-router-outlet ─────────────────────────────────────────
         const outletEl = document.createElement("ion-router-outlet");
 
         (outletEl as any).delegate = {
 
-          /**
-           * Ionic llama esto al navegar a una ruta.
-           *
-           * Modelo Angular:
-           *   - Primera vez  → crear instancia, onInit, montar, cachear
-           *   - Siguientes   → recuperar pageEl cacheado, solo re-adjuntar
-           */
           attachViewToDom: async (
             container:    HTMLElement,
             componentTag: string,
@@ -211,19 +247,23 @@ export class IonRouterOutlet extends NixComponent {
             );
 
             if (!routeDef) {
-              // Ruta desconocida — Ionic igual necesita un ion-page
               const phantom = document.createElement("ion-page");
               container.appendChild(phantom);
               return phantom;
             }
 
-            const cacheKey = routeDef.path;
+            const params   = props ?? {};
+            const cacheKey = _buildCacheKey(routeDef.path, params);
 
-            // ── Vista ya existe en caché (modelo Angular) ─────────────
+            // ── Vista cacheada ────────────────────────────────────────
             if (self._viewCache.has(cacheKey)) {
               const cached = self._viewCache.get(cacheKey)!;
 
-              // Solo re-adjuntar al container — sin recrear nada
+              // Limpiar el estado CSS que Ionic dejó durante la salida.
+              // Sin esto, ion-page-hidden (display:none !important) o
+              // estilos de animación dejan la página invisible al re-adjuntarla.
+              _resetIonicPageState(cached.pageEl);
+
               container.appendChild(cached.pageEl);
               return cached.pageEl;
             }
@@ -235,7 +275,6 @@ export class IonRouterOutlet extends NixComponent {
 
             const lc = createPageLifecycle();
 
-            // Conectar eventos de Ionic a las signals del lifecycle
             pageEl.addEventListener("ionViewWillEnter", () =>
               lc.willEnter.update((n) => n + 1)
             );
@@ -249,8 +288,6 @@ export class IonRouterOutlet extends NixComponent {
               lc.didLeave.update((n) => n + 1)
             );
 
-            // Evaluar guard
-            const params: Record<string, string> = props ?? {};
             const ctx: PageContext = { lc, params };
 
             if (routeDef.beforeEnter) {
@@ -273,50 +310,34 @@ export class IonRouterOutlet extends NixComponent {
               }
             }
 
-            // Montar componente — onInit ocurre aquí, solo esta vez
             const cleanup = self._createAndMount(pageEl, routeDef, ctx);
-
-            // Guardar en caché
             self._viewCache.set(cacheKey, { pageEl, lc, cleanup });
-
             container.appendChild(pageEl);
             return pageEl;
           },
 
-          /**
-           * Ionic llama esto al salir de una ruta.
-           *
-           * Modelo Angular:
-           *   - Solo detach del DOM — NO destruir la instancia
-           *   - La instancia permanece en _viewCache
-           *
-           * La destrucción real ocurre solo si el router
-           * elimina la ruta del stack definitivamente (ver cleanup global).
-           */
           removeViewFromDom: async (
             _container: HTMLElement,
             component:  HTMLElement
           ): Promise<void> => {
-            // Solo desconectar del DOM — la instancia sigue viva
+            // Limpiar estado CSS de animación ANTES de cachear el elemento.
+            // Ionic aplica clases como ion-page-hidden durante la transición
+            // de salida. Si no se limpian aquí, la página queda invisible
+            // cuando se recupera de caché en la siguiente visita.
+            _resetIonicPageState(component);
             component.remove();
-
-            // No tocar _viewCache aquí.
-            // La instancia permanece lista para la próxima visita.
           },
         };
 
         parent.insertBefore(routerEl, before);
         parent.insertBefore(outletEl, before);
 
-        // Cleanup global: cuando el outlet entero se desmonta
-        // destruir todas las instancias cacheadas
         return () => {
           self._viewCache.forEach((cached) => {
             cached.cleanup();
             cached.pageEl.remove();
           });
           self._viewCache.clear();
-
           routerEl.remove();
           outletEl.remove();
         };
