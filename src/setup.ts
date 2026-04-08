@@ -13,6 +13,13 @@ import { addIcons } from "ionicons";
 import { arrowBack, arrowBackSharp, chevronBack, chevronBackSharp } from "ionicons/icons";
 
 export type ComponentDefiner = () => void;
+export type IconDefinitionMap = Record<string, string>;
+
+export interface SetupNixIonicOptions {
+  iconAssetPath?: string;
+  components?: ComponentDefiner[];
+  icons?: IconDefinitionMap;
+}
 
 let isInitialized = false;
 
@@ -28,17 +35,16 @@ let isInitialized = false;
  * import { setupNixIonic } from "@deijose/nix-ionic";
  * import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
  * import { defineIonButton } from "@deijose/nix-ionic/components";
+ * import { home, homeOutline } from "ionicons/icons";
  *
  * setupNixIonic({
  *   components: [...layoutComponents, defineIonButton],
+ *   icons: { home, "home-outline": homeOutline },
  * });
  * ```
  */
 export function setupNixIonic(
-  options: {
-    iconAssetPath?: string;
-    components?: ComponentDefiner[];
-  } = {}
+  options: SetupNixIonicOptions = {}
 ) {
   if (isInitialized) return;
 
@@ -73,12 +79,17 @@ export function setupNixIonic(
     }
   }
 
-  // Register critical navigation icons
-  addIcons({
+  // Register critical navigation icons + optional app icons
+  const defaultIcons: IconDefinitionMap = {
     "arrow-back": arrowBack,
     "arrow-back-sharp": arrowBackSharp,
     "chevron-back": chevronBack,
     "chevron-back-sharp": chevronBackSharp,
+  };
+
+  addIcons({
+    ...defaultIcons,
+    ...(options.icons ?? {}),
   });
 
   isInitialized = true;

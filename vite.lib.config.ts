@@ -10,6 +10,7 @@ import { resolve } from "path";
 //   dist/lib/nix-ionic.cjs   — CommonJS   (legacy Node.js / bundlers)
 //   dist/lib/components.js   — Individual component re-exports
 //   dist/lib/bundles/*.js    — Category bundles
+//   dist/lib/tabs.js         — Bottom tab helpers
 //   dist/lib/*.d.ts          — Type declarations (generated separately by tsc)
 
 export default defineConfig({
@@ -34,6 +35,7 @@ export default defineConfig({
                 "bundles/overlays": resolve("src/bundles/overlays.ts"),
                 "bundles/navigation": resolve("src/bundles/navigation.ts"),
                 "bundles/all": resolve("src/bundles/all.ts"),
+                "tabs": resolve("src/tabs.ts"),
             },
             formats: ["es", "cjs"],
             fileName: (format, entryName) =>

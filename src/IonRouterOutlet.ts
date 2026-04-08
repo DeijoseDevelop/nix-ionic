@@ -1,5 +1,5 @@
-import { NixComponent } from "@deijose/nix-js";
-import type { NixTemplate } from "@deijose/nix-js";
+import { NixComponent, signal } from "@deijose/nix-js";
+import type { NixTemplate, Signal } from "@deijose/nix-js";
 import { createPageLifecycle, type PageLifecycle } from "./lifecycle";
 
 // --------------------------------------------------------------------------
@@ -8,34 +8,172 @@ import { createPageLifecycle, type PageLifecycle } from "./lifecycle";
 
 export interface RouterInstance {
   navigate: (path: string, direction?: "forward" | "back" | "root") => void;
-  replace:  (path: string) => void;
-  back:     () => void;
-  readonly path: string;
+  replace: (path: string) => void;
+  back: () => void;
+  readonly path: Signal<string>;
+  readonly params: Signal<Record<string, string>>;
+  readonly canGoBack: Signal<boolean>;
+}
+
+export interface RouterState {
+  readonly path: Signal<string>;
+  readonly params: Signal<Record<string, string>>;
+  readonly canGoBack: Signal<boolean>;
+}
+
+interface RoutePattern {
+  regex: RegExp;
+  keys: string[];
+}
+
+const _routerPath = signal<string>(_readPathFromLocation());
+const _routerParams = signal<Record<string, string>>({});
+const _routerCanGoBack = signal<boolean>(false);
+
+let _eventsBound = false;
+let _routePatterns: RoutePattern[] = [];
+
+function _readPathFromLocation(): string {
+  if (typeof window === "undefined") return "/";
+
+  const hash = window.location.hash;
+  if (hash.startsWith("#/")) {
+    const hashPath = hash.slice(1).split("?")[0];
+    return hashPath || "/";
+  }
+
+  return window.location.pathname || "/";
+}
+
+function _escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function _compileRoutePattern(path: string): RoutePattern {
+  const keys: string[] = [];
+  const segments = path.split("/").filter(Boolean);
+
+  if (segments.length === 0) {
+    return { regex: /^\/$/, keys };
+  }
+
+  const body = segments
+    .map((segment) => {
+      if (segment.startsWith(":")) {
+        keys.push(segment.slice(1));
+        return "([^/]+)";
+      }
+      return _escapeRegExp(segment);
+    })
+    .join("/");
+
+  return { regex: new RegExp(`^/${body}$`), keys };
+}
+
+function _setRoutePatterns(paths: string[]): void {
+  _routePatterns = paths
+    .filter((path) => path !== "*")
+    .map(_compileRoutePattern);
+}
+
+function _extractParams(path: string): Record<string, string> {
+  for (const pattern of _routePatterns) {
+    const match = pattern.regex.exec(path);
+    if (!match) continue;
+
+    const params: Record<string, string> = {};
+    for (let i = 0; i < pattern.keys.length; i++) {
+      const key = pattern.keys[i];
+      params[key] = decodeURIComponent(match[i + 1] ?? "");
+    }
+    return params;
+  }
+
+  return {};
+}
+
+async function _syncCanGoBackSignal(): Promise<void> {
+  const router = document.querySelector("ion-router") as
+    | { canGoBack?: () => boolean | Promise<boolean> }
+    | null;
+
+  if (router?.canGoBack) {
+    const value = router.canGoBack();
+    _routerCanGoBack.value = value instanceof Promise ? await value : Boolean(value);
+    return;
+  }
+
+  _routerCanGoBack.value = window.history.length > 1;
+}
+
+async function _syncRouterSignals(): Promise<void> {
+  const path = _readPathFromLocation();
+  _routerPath.value = path;
+  _routerParams.value = _extractParams(path);
+  await _syncCanGoBackSignal();
+}
+
+function _ensureRouterEventsBound(): void {
+  if (_eventsBound || typeof window === "undefined") return;
+
+  const sync = () => {
+    void _syncRouterSignals();
+  };
+
+  document.addEventListener("ionRouteWillChange", sync);
+  document.addEventListener("ionRouteDidChange", sync);
+  window.addEventListener("popstate", sync);
+  window.addEventListener("hashchange", sync);
+
+  _eventsBound = true;
+}
+
+function _scheduleRouterSync(): void {
+  requestAnimationFrame(() => {
+    void _syncRouterSignals();
+  });
 }
 
 export function useRouter(): RouterInstance {
+  _ensureRouterEventsBound();
+  void _syncRouterSignals();
+
   return {
     navigate: (path, direction = "forward") => {
       const router = document.querySelector("ion-router");
       if (router && typeof (router as any).push === "function") {
         (router as any).push(path, direction);
+        _scheduleRouterSync();
       }
     },
     replace: (path) => {
       const router = document.querySelector("ion-router");
       if (router && typeof (router as any).push === "function") {
         (router as any).push(path, "root");
+        _scheduleRouterSync();
       }
     },
     back: () => {
       const router = document.querySelector("ion-router");
       if (router && typeof (router as any).back === "function") {
         (router as any).back();
+        _scheduleRouterSync();
       }
     },
-    get path(): string {
-      return window.location.pathname;
-    },
+    path: _routerPath,
+    params: _routerParams,
+    canGoBack: _routerCanGoBack,
+  };
+}
+
+export function useRouterState(): RouterState {
+  _ensureRouterEventsBound();
+  void _syncRouterSignals();
+
+  return {
+    path: _routerPath,
+    params: _routerParams,
+    canGoBack: _routerCanGoBack,
   };
 }
 
@@ -68,18 +206,19 @@ export function IonBackButton(defaultHref: string = "/"): NixTemplate {
 
 export type GuardResult =
   | boolean
+  | string
   | { redirect: string };
 
 export type NavigationGuard = (ctx: PageContext) => GuardResult | Promise<GuardResult>;
 
 export interface PageContext {
-  lc:     PageLifecycle;
+  lc: PageLifecycle;
   params: Record<string, string>;
 }
 
 export interface RouteDefinition {
-  path:         string;
-  component:    (ctx: PageContext) => NixComponent | NixTemplate;
+  path: string;
+  component: (ctx: PageContext) => NixComponent | NixTemplate;
   beforeEnter?: NavigationGuard;
 }
 
@@ -88,8 +227,8 @@ export interface RouteDefinition {
 // --------------------------------------------------------------------------
 
 interface CachedView {
-  pageEl:  HTMLElement;
-  lc:      PageLifecycle;
+  pageEl: HTMLElement;
+  lc: PageLifecycle;
   cleanup: () => void;
 }
 
@@ -161,27 +300,68 @@ function _buildCacheKey(routePath: string, params: Record<string, string>): stri
 export class IonRouterOutlet extends NixComponent {
   private routes: RouteDefinition[];
   private _viewCache = new Map<string, CachedView>();
+  private _routeTagToDefinition = new Map<string, RouteDefinition>();
 
   constructor(routes: RouteDefinition[]) {
     super();
     this.routes = routes;
+
+    let tagIndex = 0;
+    const routablePaths: string[] = [];
+
+    for (const route of this.routes) {
+      if (route.path === "*") continue;
+      this._routeTagToDefinition.set(`nix-route-${tagIndex++}`, route);
+      routablePaths.push(route.path);
+    }
+
+    _setRoutePatterns(routablePaths);
+    _ensureRouterEventsBound();
+    void _syncRouterSignals();
   }
 
-  private _pathToRouteId(path: string): string {
-    if (!path || path === "/") return "nix-route-home";
-    const clean = path
-      .replace(/\/:?[^/]+/g, (m) =>
-        "-" + m.replace(/\//g, "").replace(/:/g, "")
-      )
-      .replace(/^\//, "")
-      .replace(/\//g, "-");
-    return `nix-route-${clean}`;
+  private _createPhantomView(container: HTMLElement): HTMLElement {
+    const phantom = document.createElement("ion-page");
+    phantom.classList.add("ion-page");
+    container.appendChild(phantom);
+    return phantom;
+  }
+
+  private _redirect(path: string): void {
+    requestAnimationFrame(() => {
+      const router = document.querySelector("ion-router");
+      if (router && typeof (router as any).push === "function") {
+        (router as any).push(path, "root");
+      }
+      _scheduleRouterSync();
+    });
+  }
+
+  private async _runGuard(
+    routeDef: RouteDefinition,
+    ctx: PageContext,
+  ): Promise<{ allow: boolean; redirect?: string }> {
+    if (!routeDef.beforeEnter) return { allow: true };
+
+    const result = await routeDef.beforeEnter(ctx);
+
+    if (result === false) return { allow: false };
+
+    if (typeof result === "string") {
+      return { allow: false, redirect: result };
+    }
+
+    if (typeof result === "object" && result && "redirect" in result) {
+      return { allow: false, redirect: result.redirect };
+    }
+
+    return { allow: true };
   }
 
   private _createAndMount(
-    pageEl:   HTMLElement,
+    pageEl: HTMLElement,
     routeDef: RouteDefinition,
-    ctx:      PageContext
+    ctx: PageContext
   ): () => void {
     const pageNode = routeDef.component(ctx);
 
@@ -192,7 +372,7 @@ export class IonRouterOutlet extends NixComponent {
       const comp = pageNode as NixComponent;
       comp.onInit?.();
       const renderCleanup = comp.render()._render(pageEl, null);
-      const mountRet      = comp.onMount?.();
+      const mountRet = comp.onMount?.();
       return () => {
         comp.onUnmount?.();
         if (typeof mountRet === "function") mountRet();
@@ -222,42 +402,44 @@ export class IonRouterOutlet extends NixComponent {
         const routerEl = document.createElement("ion-router");
         routerEl.setAttribute("use-hash", "false");
 
-        self.routes
-          .filter((r) => r.path !== "*")
-          .forEach((r) => {
-            const routeEl = document.createElement("ion-route");
-            routeEl.setAttribute("url", r.path);
-            routeEl.setAttribute("component", self._pathToRouteId(r.path));
-            routerEl.appendChild(routeEl);
-          });
+        for (const [tag, routeDef] of self._routeTagToDefinition) {
+          const routeEl = document.createElement("ion-route");
+          routeEl.setAttribute("url", routeDef.path);
+          routeEl.setAttribute("component", tag);
+          routerEl.appendChild(routeEl);
+        }
 
         const outletEl = document.createElement("ion-router-outlet");
 
         (outletEl as any).delegate = {
 
           attachViewToDom: async (
-            container:    HTMLElement,
+            container: HTMLElement,
             componentTag: string,
-            props:        Record<string, string> | null,
-            classes:      string[]
+            props: Record<string, string> | null,
+            classes: string[]
           ): Promise<HTMLElement> => {
 
-            const routeDef = self.routes.find(
-              (r) => self._pathToRouteId(r.path) === componentTag
-            );
+            const routeDef = self._routeTagToDefinition.get(componentTag);
 
             if (!routeDef) {
-              const phantom = document.createElement("ion-page");
-              container.appendChild(phantom);
-              return phantom;
+              return self._createPhantomView(container);
             }
 
-            const params   = props ?? {};
+            const params = props ?? {};
             const cacheKey = _buildCacheKey(routeDef.path, params);
 
             // ── Vista cacheada ────────────────────────────────────────
             if (self._viewCache.has(cacheKey)) {
               const cached = self._viewCache.get(cacheKey)!;
+
+              const cachedCtx: PageContext = { lc: cached.lc, params };
+              const guardResult = await self._runGuard(routeDef, cachedCtx);
+
+              if (!guardResult.allow) {
+                if (guardResult.redirect) self._redirect(guardResult.redirect);
+                return self._createPhantomView(container);
+              }
 
               // Limpiar el estado CSS que Ionic dejó durante la salida.
               // Sin esto, ion-page-hidden (display:none !important) o
@@ -265,6 +447,7 @@ export class IonRouterOutlet extends NixComponent {
               _resetIonicPageState(cached.pageEl);
 
               container.appendChild(cached.pageEl);
+              _scheduleRouterSync();
               return cached.pageEl;
             }
 
@@ -290,35 +473,22 @@ export class IonRouterOutlet extends NixComponent {
 
             const ctx: PageContext = { lc, params };
 
-            if (routeDef.beforeEnter) {
-              const result = await routeDef.beforeEnter(ctx);
-
-              if (result === false) {
-                container.appendChild(pageEl);
-                return pageEl;
-              }
-
-              if (typeof result === "object" && "redirect" in result) {
-                container.appendChild(pageEl);
-                requestAnimationFrame(() => {
-                  const router = document.querySelector("ion-router");
-                  if (router && typeof (router as any).push === "function") {
-                    (router as any).push(result.redirect, "root");
-                  }
-                });
-                return pageEl;
-              }
+            const guardResult = await self._runGuard(routeDef, ctx);
+            if (!guardResult.allow) {
+              if (guardResult.redirect) self._redirect(guardResult.redirect);
+              return self._createPhantomView(container);
             }
 
             const cleanup = self._createAndMount(pageEl, routeDef, ctx);
             self._viewCache.set(cacheKey, { pageEl, lc, cleanup });
             container.appendChild(pageEl);
+            _scheduleRouterSync();
             return pageEl;
           },
 
           removeViewFromDom: async (
             _container: HTMLElement,
-            component:  HTMLElement
+            component: HTMLElement
           ): Promise<void> => {
             // Limpiar estado CSS de animación ANTES de cachear el elemento.
             // Ionic aplica clases como ion-page-hidden durante la transición
@@ -326,6 +496,7 @@ export class IonRouterOutlet extends NixComponent {
             // cuando se recupera de caché en la siguiente visita.
             _resetIonicPageState(component);
             component.remove();
+            _scheduleRouterSync();
           },
         };
 

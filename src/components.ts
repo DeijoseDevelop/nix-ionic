@@ -18,6 +18,10 @@ export { defineCustomElement as defineIonFooter } from "@ionic/core/components/i
 export { defineCustomElement as defineIonButtons } from "@ionic/core/components/ion-buttons.js";
 export { defineCustomElement as defineIonMenu } from "@ionic/core/components/ion-menu.js";
 export { defineCustomElement as defineIonMenuButton } from "@ionic/core/components/ion-menu-button.js";
+export { defineCustomElement as defineIonTabs } from "@ionic/core/components/ion-tabs.js";
+export { defineCustomElement as defineIonTab } from "@ionic/core/components/ion-tab.js";
+export { defineCustomElement as defineIonTabBar } from "@ionic/core/components/ion-tab-bar.js";
+export { defineCustomElement as defineIonTabButton } from "@ionic/core/components/ion-tab-button.js";
 
 // Forms & Inputs
 export { defineCustomElement as defineIonInput } from "@ionic/core/components/ion-input.js";
