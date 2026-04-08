@@ -27,6 +27,8 @@ This gives you the same integration depth as `@ionic/angular` and `@ionic/react`
 npm install @deijose/nix-ionic @deijose/nix-js @ionic/core
 ```
 
+Requires `@deijose/nix-js` 1.9+ (including 2.x).
+
 ---
 
 ## Modular component loading (v1.0.0+)
