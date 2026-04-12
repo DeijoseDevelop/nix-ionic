@@ -1,6 +1,6 @@
 import { html } from "@deijose/nix-js";
 import type { NixTemplate } from "@deijose/nix-js";
-import { useRouter } from "./IonRouterOutlet";
+import { nixIonicRouter } from "./IonRouterOutlet";
 
 export interface BottomTabItem {
     path: string;
@@ -53,7 +53,7 @@ export function createBottomTabBar(
     tabs: BottomTabItem[],
     options: BottomTabBarOptions = {},
 ): NixTemplate {
-    const router = useRouter();
+    const router = nixIonicRouter();
     const slot = options.slot ?? "bottom";
     const className = options.className ?? "nix-ion-tab-bar";
     const activeClassName = options.activeClassName ?? "tab-selected";

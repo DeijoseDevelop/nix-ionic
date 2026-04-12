@@ -134,7 +134,7 @@ function _scheduleRouterSync(): void {
   });
 }
 
-export function useRouter(): RouterInstance {
+export function nixIonicRouter(): RouterInstance {
   _ensureRouterEventsBound();
   void _syncRouterSignals();
 
@@ -166,7 +166,7 @@ export function useRouter(): RouterInstance {
   };
 }
 
-export function useRouterState(): RouterState {
+export function nixIonicRouterState(): RouterState {
   _ensureRouterEventsBound();
   void _syncRouterSignals();
 

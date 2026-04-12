@@ -180,7 +180,7 @@ Use `IonPage` when you need navigation lifecycle hooks.
 
 ```typescript
 import { html, signal } from "@deijose/nix-js";
-import { IonPage, IonBackButton, useRouter } from "@deijose/nix-ionic";
+import { IonPage, IonBackButton, nixIonicRouter } from "@deijose/nix-ionic";
 import type { NixTemplate } from "@deijose/nix-js";
 import type { PageContext } from "@deijose/nix-ionic";
 
@@ -258,14 +258,14 @@ export function ProfilePage({ lc }: PageContext): NixTemplate {
 
 ---
 
-## Navigation — `useRouter()`
+## Navigation — `nixIonicRouter()`
 
 Access the router singleton from anywhere without prop drilling:
 
 ```typescript
-import { useRouter } from "@deijose/nix-ionic";
+import { nixIonicRouter } from "@deijose/nix-ionic";
 
-const router = useRouter();
+const router = nixIonicRouter();
 
 // Navigate forward
 router.navigate("/detail/42");
@@ -286,7 +286,7 @@ router.path.value        // current pathname
 
 ```typescript
 override render(): NixTemplate {
-  const router = useRouter(); // safe to call inside render()
+  const router = nixIonicRouter(); // safe to call inside render()
 
   return html`
     <ion-button @click=${() => router.navigate("/profile")}>
@@ -296,14 +296,14 @@ override render(): NixTemplate {
 }
 ```
 
-### `useRouterState()`
+### `nixIonicRouterState()`
 
 Use this helper when you only need reactive route state and not navigation methods.
 
 ```typescript
-import { useRouterState } from "@deijose/nix-ionic";
+import { nixIonicRouterState } from "@deijose/nix-ionic";
 
-const state = useRouterState();
+const state = nixIonicRouterState();
 state.path.value;
 state.params.value;
 state.canGoBack.value;
@@ -354,7 +354,7 @@ import {
   createBottomTabBar,
   IonPage,
   IonBackButton,
-  useRouter,
+  nixIonicRouter,
   type PageContext,
 } from "@deijose/nix-ionic";
 import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
@@ -389,7 +389,7 @@ class LoginPage extends IonPage {
   }
 
   override render() {
-    const router = useRouter();
+    const router = nixIonicRouter();
     return html`
       <ion-header><ion-toolbar><ion-title>Login</ion-title></ion-toolbar></ion-header>
       <ion-content class="ion-padding">
@@ -426,7 +426,7 @@ class MapPage extends IonPage {
     super(ctx.lc);
   }
   override render() {
-    const router = useRouter();
+    const router = nixIonicRouter();
     return html`
       <ion-content class="ion-padding">
         <ion-button @click=${() => router.navigate("/map/route/101")}>Open Route #101</ion-button>
@@ -461,7 +461,7 @@ class ProfilePage extends IonPage {
     super(ctx.lc);
   }
   override render() {
-    const router = useRouter();
+    const router = nixIonicRouter();
     return html`
       <ion-content class="ion-padding">
         <ion-button
@@ -627,18 +627,18 @@ new IonRouterOutlet(routes: RouteDefinition[])
 
 Mounts `ion-router` + `ion-router-outlet` in the DOM. Registers a custom element per route. Initialize once in your app entry point.
 
-### `useRouter()`
+### `nixIonicRouter()`
 
 ```typescript
-useRouter(): RouterInstance
+nixIonicRouter(): RouterInstance
 ```
 
 Returns the active router instance with methods and reactive signals (`path`, `params`, `canGoBack`).
 
-### `useRouterState()`
+### `nixIonicRouterState()`
 
 ```typescript
-useRouterState(): RouterState
+nixIonicRouterState(): RouterState
 ```
 
 Returns only reactive router state (`path`, `params`, `canGoBack`). Useful for UI components like tab bars.
@@ -695,7 +695,7 @@ useIonViewDidLeave(lc:  PageLifecycle, fn: () => void): void
 | iOS swipe back | ✅ | ✅ | ✅ native |
 | `ion-back-button` | native | wrapper | wrapper |
 | Lifecycle hooks | directive | hooks | `IonPage` / composables |
-| Navigation API | `NavController` | `useHistory` | `useRouter()` |
+| Navigation API | `NavController` | `useHistory` | `nixIonicRouter()` |
 | Modular loading | ❌ | ❌ | ✅ tree-shakeable |
 
 
@@ -1022,7 +1022,7 @@ Copy this as a starting point for any new page:
 // src/pages/MyPage.ts
 import { html, signal } from "@deijose/nix-js";
 import type { NixTemplate } from "@deijose/nix-js";
-import { IonPage, IonBackButton, useRouter } from "@deijose/nix-ionic";
+import { IonPage, IonBackButton, nixIonicRouter } from "@deijose/nix-ionic";
 import type { PageContext } from "@deijose/nix-ionic";
 
 export class MyPage extends IonPage {
@@ -1049,7 +1049,7 @@ export class MyPage extends IonPage {
   }
 
   override render(): NixTemplate {
-    const router = useRouter();
+    const router = nixIonicRouter();
 
     return html`
       <ion-header>

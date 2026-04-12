@@ -18,8 +18,8 @@ export {
 export {
   IonRouterOutlet,
   IonBackButton,
-  useRouter,
-  useRouterState,
+  nixIonicRouter,
+  nixIonicRouterState,
   type RouterInstance,
   type RouterState,
   type RouteDefinition,
