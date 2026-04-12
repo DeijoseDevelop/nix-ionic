@@ -9,7 +9,7 @@
         "ionicons": "^8.0.13",
       },
       "devDependencies": {
-        "@deijose/nix-js": "^2.0.2",
+        "@deijose/nix-js": "^2.1.0",
         "happy-dom": "^20.8.3",
         "terser": "^5.46.0",
         "typescript": "~5.9.3",
@@ -17,7 +17,7 @@
         "vite-plugin-dts": "^4.5.4",
       },
       "peerDependencies": {
-        "@deijose/nix-js": ">=1.9.0 <3",
+        "@deijose/nix-js": ">=2.1.0 <3",
       },
     },
   },
@@ -30,7 +30,7 @@
 
     "@babel/types": ["@babel/types@7.29.0", "", { "dependencies": { "@babel/helper-string-parser": "^7.27.1", "@babel/helper-validator-identifier": "^7.28.5" } }, "sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A=="],
 
-    "@deijose/nix-js": ["@deijose/nix-js@2.0.2", "", {}, "sha512-fgrcnFfjqM77apY2FGxbZh37v5QGlNkdIYTcUhAQ15/tgLUA6hbRTBWys9sgZ3+tDx87/08QIrGPNjl8KQVxyA=="],
+    "@deijose/nix-js": ["@deijose/nix-js@2.1.0", "", {}, "sha512-MsRh0O0rDpa6w+QEcxEoD08v2GSoWyTaSO88AAzqpE9HUJg20XyCLH0+2MaAjEJn26G4SGR1WwAEZZHQVwnRNg=="],
 
     "@emnapi/core": ["@emnapi/core@1.9.0", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.0", "tslib": "^2.4.0" } }, "sha512-0DQ98G9ZQZOxfUcQn1waV2yS8aWdZ6kJMbYCJB3oUBecjWYO1fqJ+a1DRfPF3O5JEkwqwP1A9QEN/9mYm2Yd0w=="],
 
