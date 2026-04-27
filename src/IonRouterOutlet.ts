@@ -253,11 +253,8 @@ const IONIC_HIDDEN_CLASSES = [
  * Se llama tanto al guardar en caché como al recuperar de caché.
  */
 function _resetIonicPageState(el: HTMLElement): void {
-  // Clases de visibilidad que Ionic gestiona
   el.classList.remove(...IONIC_HIDDEN_CLASSES);
 
-  // Estilos inline que las animaciones de Ionic dejan (opacity, transform, etc.)
-  // Solo limpiamos las propiedades que Ionic usa — no el style completo
   el.style.removeProperty("display");
   el.style.removeProperty("visibility");
   el.style.removeProperty("opacity");
@@ -293,6 +290,26 @@ function _buildCacheKey(routePath: string, params: Record<string, string>): stri
   return `${routePath}?${sortedParams}`;
 }
 
+/**
+ * Parsea el resultado de un guard a formato normalizado.
+ */
+function _parseGuardResult(
+  result: GuardResult,
+): { allow: boolean; redirect?: string } {
+  if (result === true) return { allow: true };
+  if (result === false) return { allow: false };
+
+  if (typeof result === "string") {
+    return { allow: false, redirect: result };
+  }
+
+  if (typeof result === "object" && result && "redirect" in result) {
+    return { allow: false, redirect: result.redirect };
+  }
+
+  return { allow: true };
+}
+
 // --------------------------------------------------------------------------
 // IonRouterOutlet
 // --------------------------------------------------------------------------
@@ -323,6 +340,8 @@ export class IonRouterOutlet extends NixComponent {
   private _createPhantomView(container: HTMLElement): HTMLElement {
     const phantom = document.createElement("ion-page");
     phantom.classList.add("ion-page");
+    // Phantom oculto para no producir flash en redirects
+    phantom.style.display = "none";
     container.appendChild(phantom);
     return phantom;
   }
@@ -337,31 +356,35 @@ export class IonRouterOutlet extends NixComponent {
     });
   }
 
-  private async _runGuard(
+  /**
+   * Ejecuta el guard preservando su naturaleza sync/async.
+   *
+   * Si el guard es sync (caso común — chequeo de un signal de auth),
+   * retorna el resultado directamente SIN crear una Promise.
+   * Esto es lo que permite que attachViewToDom sea sync y no haya
+   * un microtask gap entre la creación del pageEl y el mount.
+   */
+  private _runGuard(
     routeDef: RouteDefinition,
     ctx: PageContext,
-  ): Promise<{ allow: boolean; redirect?: string }> {
+  ):
+    | { allow: boolean; redirect?: string }
+    | Promise<{ allow: boolean; redirect?: string }> {
     if (!routeDef.beforeEnter) return { allow: true };
 
-    const result = await routeDef.beforeEnter(ctx);
+    const result = routeDef.beforeEnter(ctx);
 
-    if (result === false) return { allow: false };
-
-    if (typeof result === "string") {
-      return { allow: false, redirect: result };
+    if (result instanceof Promise) {
+      return result.then(_parseGuardResult);
     }
 
-    if (typeof result === "object" && result && "redirect" in result) {
-      return { allow: false, redirect: result.redirect };
-    }
-
-    return { allow: true };
+    return _parseGuardResult(result);
   }
 
   private _createAndMount(
     pageEl: HTMLElement,
     routeDef: RouteDefinition,
-    ctx: PageContext
+    ctx: PageContext,
   ): () => void {
     const pageNode = routeDef.component(ctx);
 
@@ -381,6 +404,78 @@ export class IonRouterOutlet extends NixComponent {
     } else {
       return (pageNode as NixTemplate)._render(pageEl, null);
     }
+  }
+
+  /**
+   * Crea el ion-page con su lifecycle y lo retorna SIN adjuntar al DOM.
+   * El elemento se mantiene offscreen para que las animaciones de Ionic
+   * no se ejecuten sobre un elemento vacío.
+   */
+  private _createPageEl(classes: string[]): {
+    pageEl: HTMLElement;
+    lc: PageLifecycle;
+  } {
+    const pageEl = document.createElement("ion-page");
+    pageEl.classList.add("ion-page");
+    if (classes?.length) pageEl.classList.add(...classes);
+
+    const lc = createPageLifecycle();
+
+    pageEl.addEventListener("ionViewWillEnter", () =>
+      lc.willEnter.update((n) => n + 1),
+    );
+    pageEl.addEventListener("ionViewDidEnter", () =>
+      lc.didEnter.update((n) => n + 1),
+    );
+    pageEl.addEventListener("ionViewWillLeave", () =>
+      lc.willLeave.update((n) => n + 1),
+    );
+    pageEl.addEventListener("ionViewDidLeave", () =>
+      lc.didLeave.update((n) => n + 1),
+    );
+
+    return { pageEl, lc };
+  }
+
+  /**
+   * Monta la vista nueva: render del componente + commit al container.
+   * Operación atómica — el browser nunca ve un ion-page sin contenido.
+   */
+  private _commitNewView(
+    container: HTMLElement,
+    routeDef: RouteDefinition,
+    pageEl: HTMLElement,
+    lc: PageLifecycle,
+    params: Record<string, string>,
+    cacheKey: string,
+  ): HTMLElement {
+    const ctx: PageContext = { lc, params };
+
+    // 1. Mount del contenido en pageEl (offscreen — no toca el DOM visible)
+    const cleanup = this._createAndMount(pageEl, routeDef, ctx);
+
+    // 2. Cachear
+    this._viewCache.set(cacheKey, { pageEl, lc, cleanup });
+
+    // 3. Append al container — Ionic recibe el elemento YA con contenido,
+    //    en el mismo tick. Sin gap, sin doble mount.
+    container.appendChild(pageEl);
+    _scheduleRouterSync();
+    return pageEl;
+  }
+
+  /**
+   * Re-adjunta una vista cacheada al container.
+   * Operación atómica — reset de estado + append en el mismo tick.
+   */
+  private _commitCachedView(
+    container: HTMLElement,
+    cached: CachedView,
+  ): HTMLElement {
+    _resetIonicPageState(cached.pageEl);
+    container.appendChild(cached.pageEl);
+    _scheduleRouterSync();
+    return cached.pageEl;
   }
 
   override render(): NixTemplate {
@@ -411,14 +506,39 @@ export class IonRouterOutlet extends NixComponent {
 
         const outletEl = document.createElement("ion-router-outlet");
 
+        // -------------------------------------------------------------------
+        // attachViewToDom — flujo sync cuando es posible
+        //
+        // Antes (con doble mount visible):
+        //   async attachViewToDom() {
+        //     const pageEl = create();              // Ionic recibe Promise
+        //     await guard();                        // microtask gap
+        //     mount(pageEl);                        // contenido al fin
+        //     append(pageEl);                       // append tarde
+        //   }
+        //   → Ionic ve un Promise pendiente, manipula el DOM esperando,
+        //     cuando llega el elemento ya con contenido vuelve a montar.
+        //
+        // Ahora (sin doble mount):
+        //   attachViewToDom() {                     // SYNC si guard es sync
+        //     const pageEl = create();
+        //     guard();                              // sync, sin microtask
+        //     mount(pageEl);                        // contenido inmediato
+        //     append(pageEl);                       // append en mismo tick
+        //     return pageEl;                        // Ionic recibe HTMLElement
+        //   }
+        //   → Ionic recibe el elemento listo, una sola operación de mount.
+        //
+        // Si el guard es async (raro), se devuelve Promise igual que antes.
+        // -------------------------------------------------------------------
         (outletEl as any).delegate = {
 
-          attachViewToDom: async (
+          attachViewToDom: (
             container: HTMLElement,
             componentTag: string,
             props: Record<string, string> | null,
-            classes: string[]
-          ): Promise<HTMLElement> => {
+            classes: string[],
+          ): HTMLElement | Promise<HTMLElement> => {
 
             const routeDef = self._routeTagToDefinition.get(componentTag);
 
@@ -432,68 +552,62 @@ export class IonRouterOutlet extends NixComponent {
             // ── Vista cacheada ────────────────────────────────────────
             if (self._viewCache.has(cacheKey)) {
               const cached = self._viewCache.get(cacheKey)!;
-
               const cachedCtx: PageContext = { lc: cached.lc, params };
-              const guardResult = await self._runGuard(routeDef, cachedCtx);
+              const guardResult = self._runGuard(routeDef, cachedCtx);
 
+              // Guard async → fallback a Promise
+              if (guardResult instanceof Promise) {
+                return guardResult.then((result) => {
+                  if (!result.allow) {
+                    if (result.redirect) self._redirect(result.redirect);
+                    return self._createPhantomView(container);
+                  }
+                  return self._commitCachedView(container, cached);
+                });
+              }
+
+              // Guard sync → ejecución completa en un tick
               if (!guardResult.allow) {
                 if (guardResult.redirect) self._redirect(guardResult.redirect);
                 return self._createPhantomView(container);
               }
 
-              // Limpiar el estado CSS que Ionic dejó durante la salida.
-              // Sin esto, ion-page-hidden (display:none !important) o
-              // estilos de animación dejan la página invisible al re-adjuntarla.
-              _resetIonicPageState(cached.pageEl);
-
-              container.appendChild(cached.pageEl);
-              _scheduleRouterSync();
-              return cached.pageEl;
+              return self._commitCachedView(container, cached);
             }
 
-            // ── Primera visita: crear instancia ───────────────────────
-            const pageEl = document.createElement("ion-page");
-            pageEl.classList.add("ion-page");
-            if (classes?.length) pageEl.classList.add(...classes);
-
-            const lc = createPageLifecycle();
-
-            pageEl.addEventListener("ionViewWillEnter", () =>
-              lc.willEnter.update((n) => n + 1)
-            );
-            pageEl.addEventListener("ionViewDidEnter", () =>
-              lc.didEnter.update((n) => n + 1)
-            );
-            pageEl.addEventListener("ionViewWillLeave", () =>
-              lc.willLeave.update((n) => n + 1)
-            );
-            pageEl.addEventListener("ionViewDidLeave", () =>
-              lc.didLeave.update((n) => n + 1)
-            );
-
+            // ── Primera visita ────────────────────────────────────────
+            const { pageEl, lc } = self._createPageEl(classes);
             const ctx: PageContext = { lc, params };
+            const guardResult = self._runGuard(routeDef, ctx);
 
-            const guardResult = await self._runGuard(routeDef, ctx);
+            // Guard async → fallback a Promise
+            if (guardResult instanceof Promise) {
+              return guardResult.then((result) => {
+                if (!result.allow) {
+                  if (result.redirect) self._redirect(result.redirect);
+                  return self._createPhantomView(container);
+                }
+                return self._commitNewView(
+                  container, routeDef, pageEl, lc, params, cacheKey,
+                );
+              });
+            }
+
+            // Guard sync → mount + append en un tick, sin doble render
             if (!guardResult.allow) {
               if (guardResult.redirect) self._redirect(guardResult.redirect);
               return self._createPhantomView(container);
             }
 
-            const cleanup = self._createAndMount(pageEl, routeDef, ctx);
-            self._viewCache.set(cacheKey, { pageEl, lc, cleanup });
-            container.appendChild(pageEl);
-            _scheduleRouterSync();
-            return pageEl;
+            return self._commitNewView(
+              container, routeDef, pageEl, lc, params, cacheKey,
+            );
           },
 
           removeViewFromDom: async (
             _container: HTMLElement,
-            component: HTMLElement
+            component: HTMLElement,
           ): Promise<void> => {
-            // Limpiar estado CSS de animación ANTES de cachear el elemento.
-            // Ionic aplica clases como ion-page-hidden durante la transición
-            // de salida. Si no se limpian aquí, la página queda invisible
-            // cuando se recupera de caché en la siguiente visita.
             _resetIonicPageState(component);
             component.remove();
             _scheduleRouterSync();
