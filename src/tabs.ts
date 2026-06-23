@@ -1,6 +1,17 @@
+/**
+ * @deijose/nix-ionic / tabs.ts  —  v2
+ *
+ * Bottom tab bar that drives navigation through the core router. The visual
+ * "active" state is computed from `nixRouter().current` directly.
+ *
+ * Tab switches are intentionally direction:"none" — Ionic's convention is no
+ * animation between tabs. Per-tab stacks (configured on IonRouterOutlet via
+ * `tabs: [...]`) preserve each tab's deep view across switches.
+ */
+
 import { html } from "@deijose/nix-js";
 import type { NixTemplate } from "@deijose/nix-js";
-import { nixIonicRouter } from "./IonRouterOutlet";
+import { nixRouter, type NavigationDirection } from "@deijose/nix-js";
 
 export interface BottomTabItem {
     path: string;
@@ -16,36 +27,37 @@ export interface BottomTabBarOptions {
     className?: string;
     activeClassName?: string;
     hiddenPaths?: string[];
-    navigationDirection?: "forward" | "back" | "root";
+    /**
+     * Direction passed to the router on tab change.
+     * Default `"none"` — no animation, native Ionic feel.
+     */
+    navigationDirection?: NavigationDirection;
     hideWhen?: (path: string) => boolean;
 }
 
-function _normalizePath(path: string): string {
-    if (!path) return "/";
-    if (path === "/") return "/";
-    return path.endsWith("/") ? path.slice(0, -1) : path;
+function _normalizePath(p: string): string {
+    if (!p || p === "/") return "/";
+    return p.endsWith("/") ? p.slice(0, -1) : p;
 }
 
 function _isActive(tab: BottomTabItem, currentPath: string): boolean {
-    const current = _normalizePath(currentPath);
-    const target = _normalizePath(tab.path);
-
-    if (tab.exact) return current === target;
-    if (target === "/") return current === "/";
-    return current === target || current.startsWith(`${target}/`);
+    const cur = _normalizePath(currentPath);
+    const tgt = _normalizePath(tab.path);
+    if (tab.exact) return cur === tgt;
+    if (tgt === "/") return cur === "/";
+    return cur === tgt || cur.startsWith(`${tgt}/`);
 }
 
-function _isHidden(path: string, hiddenPaths?: string[]): boolean {
-    if (!hiddenPaths || hiddenPaths.length === 0) return false;
-
-    const current = _normalizePath(path);
-    return hiddenPaths.some((pattern) => {
-        const normalized = _normalizePath(pattern);
-        if (normalized.endsWith("/*")) {
-            const base = normalized.slice(0, -2);
-            return current === base || current.startsWith(`${base}/`);
+function _isHidden(path: string, patterns?: string[]): boolean {
+    if (!patterns?.length) return false;
+    const cur = _normalizePath(path);
+    return patterns.some((pat) => {
+        const norm = _normalizePath(pat);
+        if (norm.endsWith("/*")) {
+            const base = norm.slice(0, -2);
+            return cur === base || cur.startsWith(`${base}/`);
         }
-        return current === normalized;
+        return cur === norm;
     });
 }
 
@@ -53,18 +65,18 @@ export function createBottomTabBar(
     tabs: BottomTabItem[],
     options: BottomTabBarOptions = {},
 ): NixTemplate {
-    const router = nixIonicRouter();
+    const router = nixRouter();
     const slot = options.slot ?? "bottom";
     const className = options.className ?? "nix-ion-tab-bar";
     const activeClassName = options.activeClassName ?? "tab-selected";
-    const direction = options.navigationDirection ?? "root";
+    const direction: NavigationDirection = options.navigationDirection ?? "none";
 
     return html`
     <ion-tab-bar
       slot=${slot}
       class=${className}
       style=${() => {
-            const path = router.path.value;
+            const path = router.current.value;
             const hidden = options.hideWhen
                 ? options.hideWhen(path)
                 : _isHidden(path, options.hiddenPaths);
@@ -78,14 +90,22 @@ export function createBottomTabBar(
             return html`
           <ion-tab-button
             tab=${tabId}
-            class=${() => (_isActive(tab, router.path.value) ? activeClassName : "")}
-            @click=${() => router.navigate(tab.path, direction)}
+            class=${() => (_isActive(tab, router.current.value) ? activeClassName : "")}
+            @click=${() => {
+                    // If we're already on this tab's tree, going to its root
+                    // is a "back to root" — use replace to avoid stack growth.
+                    if (_isActive(tab, router.current.value)) {
+                        router.replace(tab.path, { direction: "none" });
+                    } else {
+                        router.navigate(tab.path, { direction });
+                    }
+                }}
           >
             ${tab.icon
                     ? html`
                   <ion-icon
                     name=${() => {
-                            const active = _isActive(tab, router.path.value);
+                            const active = _isActive(tab, router.current.value);
                             return active && tab.activeIcon ? tab.activeIcon : tab.icon;
                         }}
                   ></ion-icon>

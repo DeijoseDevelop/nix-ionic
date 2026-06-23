@@ -1,632 +1,690 @@
-import { NixComponent, signal } from "@deijose/nix-js";
-import type { NixTemplate, Signal } from "@deijose/nix-js";
+/**
+ * @deijose/nix-ionic / IonRouterOutlet.ts  —  v2.5
+ *
+ *  Architecture: "core API + ion-router-outlet motor" (with auto-bootstrap)
+ *
+ *  Changes vs v2.4:
+ *
+ *  (E) Manual lifecycle dispatch on duration-0 transitions.
+ *      EMPIRICAL FINDING: <ion-router-outlet>.commit() with `duration: 0`
+ *      (used for direction: "none" and "root") does NOT fire the lifecycle
+ *      events. We confirmed this with `replace("/login")` after a logout —
+ *      the leaving page's `ionViewWillLeave` never ran.
+ *
+ *      The fix: when `direction` is "none" or "root", we synthesize the
+ *      events ourselves around the commit() call, in the order Ionic
+ *      documents:
+ *        1. WillLeave on the leaving page  (BEFORE commit starts)
+ *        2. WillEnter on the entering page (BEFORE commit starts)
+ *        3. await commit()                  (instantaneous when duration=0)
+ *        4. DidEnter on the entering page  (AFTER commit resolves)
+ *        5. DidLeave on the leaving page   (AFTER DidEnter — Ionic docs)
+ *
+ *      For animated transitions ("forward"/"back") we still rely on Ionic
+ *      to fire the events, since those go through the full animation path
+ *      where the events ARE wired correctly.
+ *
+ *  Kept from earlier versions:
+ *    (A) Anti-flash on first mount.
+ *    (B) StackManager `back` recognition.
+ *    (C) _hideInactivePages defensive sweep after every transition.
+ *    (D) Manual lifecycle dispatch on first mount (no leaving page).
+ *
+ *  Subclass note for IonPage users: if you override `onInit()` in a
+ *  subclass, you MUST call `super.onInit()` first. The base IonPage uses
+ *  onInit to wire `watch()` calls onto the lifecycle signals — without the
+ *  super call, your `ionViewWillEnter`/etc. methods never fire.
+ */
+
+import { NixComponent, effect } from "@deijose/nix-js";
+import type { NixTemplate } from "@deijose/nix-js";
+import {
+    nixRouter,
+    createRouter,
+    _hasActiveRouter,
+    type Router,
+    type RouteRecord,
+    type NavigationGuard,
+    type NavigationIntent,
+    type NavigationDirection,
+} from "@deijose/nix-js";
 import { createPageLifecycle, type PageLifecycle } from "./lifecycle";
 
-// --------------------------------------------------------------------------
-// Router store singleton
-// --------------------------------------------------------------------------
-
-export interface RouterInstance {
-  navigate: (path: string, direction?: "forward" | "back" | "root") => void;
-  replace: (path: string) => void;
-  back: () => void;
-  readonly path: Signal<string>;
-  readonly params: Signal<Record<string, string>>;
-  readonly canGoBack: Signal<boolean>;
-}
-
-export interface RouterState {
-  readonly path: Signal<string>;
-  readonly params: Signal<Record<string, string>>;
-  readonly canGoBack: Signal<boolean>;
-}
-
-interface RoutePattern {
-  regex: RegExp;
-  keys: string[];
-}
-
-const _routerPath = signal<string>(_readPathFromLocation());
-const _routerParams = signal<Record<string, string>>({});
-const _routerCanGoBack = signal<boolean>(false);
-
-let _eventsBound = false;
-let _routePatterns: RoutePattern[] = [];
-
-function _readPathFromLocation(): string {
-  if (typeof window === "undefined") return "/";
-
-  const hash = window.location.hash;
-  if (hash.startsWith("#/")) {
-    const hashPath = hash.slice(1).split("?")[0];
-    return hashPath || "/";
-  }
-
-  return window.location.pathname || "/";
-}
-
-function _escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function _compileRoutePattern(path: string): RoutePattern {
-  const keys: string[] = [];
-  const segments = path.split("/").filter(Boolean);
-
-  if (segments.length === 0) {
-    return { regex: /^\/$/, keys };
-  }
-
-  const body = segments
-    .map((segment) => {
-      if (segment.startsWith(":")) {
-        keys.push(segment.slice(1));
-        return "([^/]+)";
-      }
-      return _escapeRegExp(segment);
-    })
-    .join("/");
-
-  return { regex: new RegExp(`^/${body}$`), keys };
-}
-
-function _setRoutePatterns(paths: string[]): void {
-  _routePatterns = paths
-    .filter((path) => path !== "*")
-    .map(_compileRoutePattern);
-}
-
-function _extractParams(path: string): Record<string, string> {
-  for (const pattern of _routePatterns) {
-    const match = pattern.regex.exec(path);
-    if (!match) continue;
-
-    const params: Record<string, string> = {};
-    for (let i = 0; i < pattern.keys.length; i++) {
-      const key = pattern.keys[i];
-      params[key] = decodeURIComponent(match[i + 1] ?? "");
-    }
-    return params;
-  }
-
-  return {};
-}
-
-async function _syncCanGoBackSignal(): Promise<void> {
-  const router = document.querySelector("ion-router") as
-    | { canGoBack?: () => boolean | Promise<boolean> }
-    | null;
-
-  if (router?.canGoBack) {
-    const value = router.canGoBack();
-    _routerCanGoBack.value = value instanceof Promise ? await value : Boolean(value);
-    return;
-  }
-
-  _routerCanGoBack.value = window.history.length > 1;
-}
-
-async function _syncRouterSignals(): Promise<void> {
-  const path = _readPathFromLocation();
-  _routerPath.value = path;
-  _routerParams.value = _extractParams(path);
-  await _syncCanGoBackSignal();
-}
-
-function _ensureRouterEventsBound(): void {
-  if (_eventsBound || typeof window === "undefined") return;
-
-  const sync = () => {
-    void _syncRouterSignals();
-  };
-
-  document.addEventListener("ionRouteWillChange", sync);
-  document.addEventListener("ionRouteDidChange", sync);
-  window.addEventListener("popstate", sync);
-  window.addEventListener("hashchange", sync);
-
-  _eventsBound = true;
-}
-
-function _scheduleRouterSync(): void {
-  requestAnimationFrame(() => {
-    void _syncRouterSignals();
-  });
-}
-
-export function nixIonicRouter(): RouterInstance {
-  _ensureRouterEventsBound();
-  void _syncRouterSignals();
-
-  return {
-    navigate: (path, direction = "forward") => {
-      const router = document.querySelector("ion-router");
-      if (router && typeof (router as any).push === "function") {
-        (router as any).push(path, direction);
-        _scheduleRouterSync();
-      }
-    },
-    replace: (path) => {
-      const router = document.querySelector("ion-router");
-      if (router && typeof (router as any).push === "function") {
-        (router as any).push(path, "root");
-        _scheduleRouterSync();
-      }
-    },
-    back: () => {
-      const router = document.querySelector("ion-router");
-      if (router && typeof (router as any).back === "function") {
-        (router as any).back();
-        _scheduleRouterSync();
-      }
-    },
-    path: _routerPath,
-    params: _routerParams,
-    canGoBack: _routerCanGoBack,
-  };
-}
-
-export function nixIonicRouterState(): RouterState {
-  _ensureRouterEventsBound();
-  void _syncRouterSignals();
-
-  return {
-    path: _routerPath,
-    params: _routerParams,
-    canGoBack: _routerCanGoBack,
-  };
-}
-
-// --------------------------------------------------------------------------
-// IonBackButton
-// --------------------------------------------------------------------------
-
-export function IonBackButton(defaultHref: string = "/"): NixTemplate {
-  return {
-    __isNixTemplate: true as const,
-    mount(container: Element | string) {
-      const el = typeof container === "string"
-        ? document.querySelector(container)!
-        : container;
-      const cleanup = this._render(el, null);
-      return { unmount: cleanup };
-    },
-    _render(parent: Node, before: Node | null): () => void {
-      const btn = document.createElement("ion-back-button");
-      btn.setAttribute("default-href", defaultHref);
-      parent.insertBefore(btn, before);
-      return () => btn.remove();
-    },
-  };
-}
-
-// --------------------------------------------------------------------------
-// Tipos públicos
-// --------------------------------------------------------------------------
+// =============================================================================
+//  Public types
+// =============================================================================
 
 export type GuardResult =
-  | boolean
-  | string
-  | { redirect: string };
-
-export type NavigationGuard = (ctx: PageContext) => GuardResult | Promise<GuardResult>;
+    | boolean
+    | string
+    | { redirect: string }
+    | void
+    | undefined;
 
 export interface PageContext {
-  lc: PageLifecycle;
-  params: Record<string, string>;
+    lc: PageLifecycle;
+    params: Record<string, string>;
 }
 
 export interface RouteDefinition {
-  path: string;
-  component: (ctx: PageContext) => NixComponent | NixTemplate;
-  beforeEnter?: NavigationGuard;
+    path: string;
+    component: (ctx: PageContext) => NixComponent | NixTemplate;
+    beforeEnter?: (ctx: PageContext) => GuardResult | Promise<GuardResult>;
 }
 
-// --------------------------------------------------------------------------
-// Entrada de caché
-// --------------------------------------------------------------------------
+export interface IonRouterOutletOptions {
+    cache?: boolean;
+    defaultAnimation?: unknown;
+    tabs?: string[];
+    skipAutoBootstrap?: boolean;
+}
+
+// =============================================================================
+//  Helpers
+// =============================================================================
+
+function adaptGuardForCore(
+    routePath: string,
+    pageGuard: (ctx: PageContext) => GuardResult | Promise<GuardResult>,
+): NavigationGuard {
+    return (to: string, _from: string) => {
+        const params = extractParamsFromPath(routePath, to);
+        const lc = createPageLifecycle();
+        return pageGuard({ lc, params }) as any;
+    };
+}
+
+function extractParamsFromPath(pattern: string, actual: string): Record<string, string> {
+    const patternParts = pattern.split("/").filter(Boolean);
+    const actualParts = actual.split("/").filter(Boolean);
+    const params: Record<string, string> = {};
+    for (let i = 0; i < patternParts.length && i < actualParts.length; i++) {
+        const p = patternParts[i];
+        if (p.startsWith(":")) {
+            try {
+                params[p.slice(1)] = decodeURIComponent(actualParts[i] ?? "");
+            } catch {
+                params[p.slice(1)] = actualParts[i] ?? "";
+            }
+        }
+    }
+    return params;
+}
+
+function _parseGuardResult(r: GuardResult): { allow: boolean; redirect?: string } {
+    if (r === false) return { allow: false };
+    if (r === true || r === undefined || r === null) return { allow: true };
+    if (typeof r === "string") return { allow: false, redirect: r };
+    if (typeof r === "object" && "redirect" in r && typeof r.redirect === "string") {
+        return { allow: false, redirect: r.redirect };
+    }
+    return { allow: true };
+}
+
+function buildCoreRouteRecords(routes: RouteDefinition[]): RouteRecord[] {
+    return routes.map((r): RouteRecord => ({
+        path: r.path,
+        component: undefined,
+        beforeEnter: r.beforeEnter
+            ? adaptGuardForCore(r.path, r.beforeEnter)
+            : undefined,
+    }));
+}
 
 interface CachedView {
-  pageEl: HTMLElement;
-  lc: PageLifecycle;
-  cleanup: () => void;
-}
-
-// --------------------------------------------------------------------------
-// Helpers
-// --------------------------------------------------------------------------
-
-/**
- * Clases CSS que Ionic aplica durante transiciones de salida.
- * Si la página sale animada, estas clases quedan en el elemento
- * y lo dejan invisible cuando se re-adjunta desde la caché.
- */
-const IONIC_HIDDEN_CLASSES = [
-  "ion-page-hidden",
-  "ion-page-invisible",
-  "can-go-back",
-];
-
-/**
- * Limpia el estado de animación/visibilidad que Ionic pudo haber aplicado
- * al elemento durante la transición de salida.
- * Se llama tanto al guardar en caché como al recuperar de caché.
- */
-function _resetIonicPageState(el: HTMLElement): void {
-  el.classList.remove(...IONIC_HIDDEN_CLASSES);
-
-  el.style.removeProperty("display");
-  el.style.removeProperty("visibility");
-  el.style.removeProperty("opacity");
-  el.style.removeProperty("transform");
-  el.style.removeProperty("animation");
-  el.style.removeProperty("transition");
-  el.style.removeProperty("pointer-events");
-  el.style.removeProperty("z-index");
-}
-
-/**
- * Determina si una ruta tiene segmentos dinámicos (:param).
- */
-function _hasDynamicSegments(path: string): boolean {
-  return path.includes(":");
-}
-
-/**
- * Construye la cache key para una vista.
- *
- * Rutas estáticas (/home):         key = "/home"
- * Rutas dinámicas (/events/:id):   key = "/events/:id?id=abc"
- *   → una instancia POR combinación de params única
- */
-function _buildCacheKey(routePath: string, params: Record<string, string>): string {
-  if (!_hasDynamicSegments(routePath) || Object.keys(params).length === 0) {
-    return routePath;
-  }
-  const sortedParams = Object.keys(params)
-    .sort()
-    .map((k) => `${k}=${params[k]}`)
-    .join("&");
-  return `${routePath}?${sortedParams}`;
-}
-
-/**
- * Parsea el resultado de un guard a formato normalizado.
- */
-function _parseGuardResult(
-  result: GuardResult,
-): { allow: boolean; redirect?: string } {
-  if (result === true) return { allow: true };
-  if (result === false) return { allow: false };
-
-  if (typeof result === "string") {
-    return { allow: false, redirect: result };
-  }
-
-  if (typeof result === "object" && result && "redirect" in result) {
-    return { allow: false, redirect: result.redirect };
-  }
-
-  return { allow: true };
-}
-
-// --------------------------------------------------------------------------
-// IonRouterOutlet
-// --------------------------------------------------------------------------
-
-export class IonRouterOutlet extends NixComponent {
-  private routes: RouteDefinition[];
-  private _viewCache = new Map<string, CachedView>();
-  private _routeTagToDefinition = new Map<string, RouteDefinition>();
-
-  constructor(routes: RouteDefinition[]) {
-    super();
-    this.routes = routes;
-
-    let tagIndex = 0;
-    const routablePaths: string[] = [];
-
-    for (const route of this.routes) {
-      if (route.path === "*") continue;
-      this._routeTagToDefinition.set(`nix-route-${tagIndex++}`, route);
-      routablePaths.push(route.path);
-    }
-
-    _setRoutePatterns(routablePaths);
-    _ensureRouterEventsBound();
-    void _syncRouterSignals();
-  }
-
-  private _createPhantomView(container: HTMLElement): HTMLElement {
-    const phantom = document.createElement("ion-page");
-    phantom.classList.add("ion-page");
-    // Phantom oculto para no producir flash en redirects
-    phantom.style.display = "none";
-    container.appendChild(phantom);
-    return phantom;
-  }
-
-  private _redirect(path: string): void {
-    requestAnimationFrame(() => {
-      const router = document.querySelector("ion-router");
-      if (router && typeof (router as any).push === "function") {
-        (router as any).push(path, "root");
-      }
-      _scheduleRouterSync();
-    });
-  }
-
-  /**
-   * Ejecuta el guard preservando su naturaleza sync/async.
-   *
-   * Si el guard es sync (caso común — chequeo de un signal de auth),
-   * retorna el resultado directamente SIN crear una Promise.
-   * Esto es lo que permite que attachViewToDom sea sync y no haya
-   * un microtask gap entre la creación del pageEl y el mount.
-   */
-  private _runGuard(
-    routeDef: RouteDefinition,
-    ctx: PageContext,
-  ):
-    | { allow: boolean; redirect?: string }
-    | Promise<{ allow: boolean; redirect?: string }> {
-    if (!routeDef.beforeEnter) return { allow: true };
-
-    const result = routeDef.beforeEnter(ctx);
-
-    if (result instanceof Promise) {
-      return result.then(_parseGuardResult);
-    }
-
-    return _parseGuardResult(result);
-  }
-
-  private _createAndMount(
-    pageEl: HTMLElement,
-    routeDef: RouteDefinition,
-    ctx: PageContext,
-  ): () => void {
-    const pageNode = routeDef.component(ctx);
-
-    if (
-      "render" in pageNode &&
-      typeof (pageNode as NixComponent).render === "function"
-    ) {
-      const comp = pageNode as NixComponent;
-      comp.onInit?.();
-      const renderCleanup = comp.render()._render(pageEl, null);
-      const mountRet = comp.onMount?.();
-      return () => {
-        comp.onUnmount?.();
-        if (typeof mountRet === "function") mountRet();
-        renderCleanup();
-      };
-    } else {
-      return (pageNode as NixTemplate)._render(pageEl, null);
-    }
-  }
-
-  /**
-   * Crea el ion-page con su lifecycle y lo retorna SIN adjuntar al DOM.
-   * El elemento se mantiene offscreen para que las animaciones de Ionic
-   * no se ejecuten sobre un elemento vacío.
-   */
-  private _createPageEl(classes: string[]): {
     pageEl: HTMLElement;
     lc: PageLifecycle;
-  } {
-    const pageEl = document.createElement("ion-page");
-    pageEl.classList.add("ion-page");
-    if (classes?.length) pageEl.classList.add(...classes);
+    cleanup: () => void;
+    cacheKey: string;
+}
 
-    const lc = createPageLifecycle();
+const IONIC_STATE_CLASSES_TO_RESET = ["ion-page-hidden", "can-go-back"];
 
-    pageEl.addEventListener("ionViewWillEnter", () =>
-      lc.willEnter.update((n) => n + 1),
-    );
-    pageEl.addEventListener("ionViewDidEnter", () =>
-      lc.didEnter.update((n) => n + 1),
-    );
-    pageEl.addEventListener("ionViewWillLeave", () =>
-      lc.willLeave.update((n) => n + 1),
-    );
-    pageEl.addEventListener("ionViewDidLeave", () =>
-      lc.didLeave.update((n) => n + 1),
-    );
+function _resetCachedPageState(el: HTMLElement): void {
+    el.classList.remove(...IONIC_STATE_CLASSES_TO_RESET);
+    el.style.removeProperty("display");
+    el.style.removeProperty("visibility");
+    el.style.removeProperty("opacity");
+    el.style.removeProperty("transform");
+    el.style.removeProperty("animation");
+    el.style.removeProperty("transition");
+    el.style.removeProperty("pointer-events");
+    el.style.removeProperty("z-index");
+}
 
-    return { pageEl, lc };
-  }
+function _hasDynamicSegments(path: string): boolean {
+    return path.includes(":");
+}
 
-  /**
-   * Monta la vista nueva: render del componente + commit al container.
-   * Operación atómica — el browser nunca ve un ion-page sin contenido.
-   */
-  private _commitNewView(
-    container: HTMLElement,
-    routeDef: RouteDefinition,
+function _buildCacheKey(routePath: string, params: Record<string, string>): string {
+    if (!_hasDynamicSegments(routePath) || Object.keys(params).length === 0) {
+        return routePath;
+    }
+    const sorted = Object.keys(params)
+        .sort()
+        .map((k) => `${k}=${params[k]}`)
+        .join("&");
+    return `${routePath}?${sorted}`;
+}
+
+/**
+ * Synthesize an Ionic page-lifecycle event on a pageEl. Used when commit()
+ * either won't run at all (first mount) or runs with duration:0 (which
+ * empirically does not fire lifecycle events in Ionic).
+ */
+function _dispatchIonicLifecycle(
     pageEl: HTMLElement,
-    lc: PageLifecycle,
-    params: Record<string, string>,
-    cacheKey: string,
-  ): HTMLElement {
-    const ctx: PageContext = { lc, params };
+    name: "ionViewWillEnter" | "ionViewDidEnter" | "ionViewWillLeave" | "ionViewDidLeave",
+): void {
+    pageEl.dispatchEvent(new CustomEvent(name, {
+        bubbles: true,
+        cancelable: false,
+        composed: true,
+    }));
+}
 
-    // 1. Mount del contenido en pageEl (offscreen — no toca el DOM visible)
-    const cleanup = this._createAndMount(pageEl, routeDef, ctx);
+// =============================================================================
+//  Stack manager
+// =============================================================================
 
-    // 2. Cachear
-    this._viewCache.set(cacheKey, { pageEl, lc, cleanup });
+interface TabStack {
+    prefix: string;
+    entries: string[];
+}
 
-    // 3. Append al container — Ionic recibe el elemento YA con contenido,
-    //    en el mismo tick. Sin gap, sin doble mount.
-    container.appendChild(pageEl);
-    _scheduleRouterSync();
-    return pageEl;
-  }
+class StackManager {
+    private _stacks = new Map<string, TabStack>();
+    private _activeTabKey: string;
+    private _tabPrefixes: string[];
 
-  /**
-   * Re-adjunta una vista cacheada al container.
-   * Operación atómica — reset de estado + append en el mismo tick.
-   */
-  private _commitCachedView(
-    container: HTMLElement,
-    cached: CachedView,
-  ): HTMLElement {
-    _resetIonicPageState(cached.pageEl);
-    container.appendChild(cached.pageEl);
-    _scheduleRouterSync();
-    return cached.pageEl;
-  }
+    constructor(tabs: string[] | undefined) {
+        this._stacks.set("", { prefix: "", entries: [] });
+        if (tabs?.length) {
+            for (const prefix of tabs) {
+                const norm = this._normalize(prefix);
+                this._stacks.set(norm, { prefix: norm, entries: [] });
+            }
+            this._tabPrefixes = tabs.map((t) => this._normalize(t))
+                .sort((a, b) => b.length - a.length);
+        } else {
+            this._tabPrefixes = [];
+        }
+        this._activeTabKey = "";
+    }
 
-  override render(): NixTemplate {
-    const self = this;
+    keyForPath(path: string): string {
+        for (const prefix of this._tabPrefixes) {
+            if (path === prefix || path.startsWith(prefix + "/")) {
+                return prefix;
+            }
+        }
+        return "";
+    }
 
-    return {
-      __isNixTemplate: true as const,
+    apply(path: string, intent: NavigationIntent): NavigationDirection {
+        const targetKey = this.keyForPath(path);
+        const stack = this._stacks.get(targetKey)!;
 
-      mount(container: Element | string) {
-        const el = typeof container === "string"
-          ? document.querySelector(container)!
-          : container;
-        const cleanup = this._render(el, null);
-        return { unmount: cleanup };
-      },
-
-      _render(parent: Node, before: Node | null): () => void {
-
-        const routerEl = document.createElement("ion-router");
-        routerEl.setAttribute("use-hash", "false");
-
-        for (const [tag, routeDef] of self._routeTagToDefinition) {
-          const routeEl = document.createElement("ion-route");
-          routeEl.setAttribute("url", routeDef.path);
-          routeEl.setAttribute("component", tag);
-          routerEl.appendChild(routeEl);
+        if (targetKey !== this._activeTabKey) {
+            this._activeTabKey = targetKey;
+            const top = stack.entries[stack.entries.length - 1];
+            if (top !== path) stack.entries.push(path);
+            return "none";
         }
 
-        const outletEl = document.createElement("ion-router-outlet");
-
-        // -------------------------------------------------------------------
-        // attachViewToDom — flujo sync cuando es posible
-        //
-        // Antes (con doble mount visible):
-        //   async attachViewToDom() {
-        //     const pageEl = create();              // Ionic recibe Promise
-        //     await guard();                        // microtask gap
-        //     mount(pageEl);                        // contenido al fin
-        //     append(pageEl);                       // append tarde
-        //   }
-        //   → Ionic ve un Promise pendiente, manipula el DOM esperando,
-        //     cuando llega el elemento ya con contenido vuelve a montar.
-        //
-        // Ahora (sin doble mount):
-        //   attachViewToDom() {                     // SYNC si guard es sync
-        //     const pageEl = create();
-        //     guard();                              // sync, sin microtask
-        //     mount(pageEl);                        // contenido inmediato
-        //     append(pageEl);                       // append en mismo tick
-        //     return pageEl;                        // Ionic recibe HTMLElement
-        //   }
-        //   → Ionic recibe el elemento listo, una sola operación de mount.
-        //
-        // Si el guard es async (raro), se devuelve Promise igual que antes.
-        // -------------------------------------------------------------------
-        (outletEl as any).delegate = {
-
-          attachViewToDom: (
-            container: HTMLElement,
-            componentTag: string,
-            props: Record<string, string> | null,
-            classes: string[],
-          ): HTMLElement | Promise<HTMLElement> => {
-
-            const routeDef = self._routeTagToDefinition.get(componentTag);
-
-            if (!routeDef) {
-              return self._createPhantomView(container);
+        if (intent.direction === "back") {
+            while (stack.entries.length > 0
+                && stack.entries[stack.entries.length - 1] !== path) {
+                stack.entries.pop();
             }
+            if (stack.entries.length === 0) stack.entries.push(path);
+            return "back";
+        }
 
-            const params = props ?? {};
-            const cacheKey = _buildCacheKey(routeDef.path, params);
+        if (intent.action === "replace" || intent.direction === "root") {
+            if (stack.entries.length === 0) stack.entries.push(path);
+            else stack.entries[stack.entries.length - 1] = path;
+            return intent.direction === "forward" ? "forward" : "root";
+        }
 
-            // ── Vista cacheada ────────────────────────────────────────
-            if (self._viewCache.has(cacheKey)) {
-              const cached = self._viewCache.get(cacheKey)!;
-              const cachedCtx: PageContext = { lc: cached.lc, params };
-              const guardResult = self._runGuard(routeDef, cachedCtx);
+        if (intent.action === "initial") {
+            if (stack.entries.length === 0) stack.entries.push(path);
+            return "none";
+        }
 
-              // Guard async → fallback a Promise
-              if (guardResult instanceof Promise) {
-                return guardResult.then((result) => {
-                  if (!result.allow) {
-                    if (result.redirect) self._redirect(result.redirect);
-                    return self._createPhantomView(container);
-                  }
-                  return self._commitCachedView(container, cached);
-                });
-              }
+        const top = stack.entries[stack.entries.length - 1];
+        if (top !== path) stack.entries.push(path);
+        return intent.direction;
+    }
 
-              // Guard sync → ejecución completa en un tick
-              if (!guardResult.allow) {
-                if (guardResult.redirect) self._redirect(guardResult.redirect);
-                return self._createPhantomView(container);
-              }
+    private _normalize(p: string): string {
+        if (!p || p === "/") return "/";
+        return p.endsWith("/") ? p.slice(0, -1) : p;
+    }
+}
 
-              return self._commitCachedView(container, cached);
+// =============================================================================
+//  Cache registry
+// =============================================================================
+
+class CacheRegistry {
+    private _byTab = new Map<string, Map<string, CachedView>>();
+
+    get(tabKey: string, cacheKey: string): CachedView | undefined {
+        return this._byTab.get(tabKey)?.get(cacheKey);
+    }
+
+    set(tabKey: string, cacheKey: string, view: CachedView): void {
+        let map = this._byTab.get(tabKey);
+        if (!map) { map = new Map(); this._byTab.set(tabKey, map); }
+        map.set(cacheKey, view);
+    }
+
+    delete(tabKey: string, cacheKey: string): void {
+        this._byTab.get(tabKey)?.delete(cacheKey);
+    }
+
+    *all(): Generator<{ tabKey: string; cacheKey: string; view: CachedView }> {
+        for (const [tabKey, map] of this._byTab.entries()) {
+            for (const [cacheKey, view] of map.entries()) {
+                yield { tabKey, cacheKey, view };
             }
+        }
+    }
 
-            // ── Primera visita ────────────────────────────────────────
-            const { pageEl, lc } = self._createPageEl(classes);
-            const ctx: PageContext = { lc, params };
-            const guardResult = self._runGuard(routeDef, ctx);
+    clear(): void {
+        this._byTab.clear();
+    }
+}
 
-            // Guard async → fallback a Promise
-            if (guardResult instanceof Promise) {
-              return guardResult.then((result) => {
-                if (!result.allow) {
-                  if (result.redirect) self._redirect(result.redirect);
-                  return self._createPhantomView(container);
+// =============================================================================
+//  IonBackButton
+// =============================================================================
+
+export function IonBackButton(defaultHref: string = "/"): NixTemplate {
+    return {
+        __isNixTemplate: true as const,
+        mount(container: Element | string) {
+            const el = typeof container === "string"
+                ? document.querySelector(container)!
+                : container;
+            const cleanup = this._render(el, null);
+            return { unmount: cleanup };
+        },
+        _render(parent: Node, before: Node | null): () => void {
+            const btn = document.createElement("ion-back-button");
+            btn.setAttribute("default-href", defaultHref);
+            const onClick = (ev: Event) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const router = nixRouter();
+                if (router.canGoBack.value) {
+                    router.back();
+                } else {
+                    router.replace(defaultHref);
                 }
-                return self._commitNewView(
-                  container, routeDef, pageEl, lc, params, cacheKey,
-                );
-              });
-            }
-
-            // Guard sync → mount + append en un tick, sin doble render
-            if (!guardResult.allow) {
-              if (guardResult.redirect) self._redirect(guardResult.redirect);
-              return self._createPhantomView(container);
-            }
-
-            return self._commitNewView(
-              container, routeDef, pageEl, lc, params, cacheKey,
-            );
-          },
-
-          removeViewFromDom: async (
-            _container: HTMLElement,
-            component: HTMLElement,
-          ): Promise<void> => {
-            _resetIonicPageState(component);
-            component.remove();
-            _scheduleRouterSync();
-          },
-        };
-
-        parent.insertBefore(routerEl, before);
-        parent.insertBefore(outletEl, before);
-
-        return () => {
-          self._viewCache.forEach((cached) => {
-            cached.cleanup();
-            cached.pageEl.remove();
-          });
-          self._viewCache.clear();
-          routerEl.remove();
-          outletEl.remove();
-        };
-      },
+            };
+            btn.addEventListener("click", onClick);
+            parent.insertBefore(btn, before);
+            return () => {
+                btn.removeEventListener("click", onClick);
+                btn.remove();
+            };
+        },
     };
-  }
+}
+
+// =============================================================================
+//  IonRouterOutlet
+// =============================================================================
+
+export class IonRouterOutlet extends NixComponent {
+    private _routesByPath = new Map<string, RouteDefinition>();
+    private _enableCache: boolean;
+    private _defaultAnimation: unknown;
+
+    private _stacks: StackManager;
+    private _cache = new CacheRegistry();
+
+    private _activePageEl: HTMLElement | null = null;
+    private _activeCacheKey: string | null = null;
+    private _activeTabKey: string | null = null;
+
+    private _outletEl: HTMLElement | null = null;
+    private _routeEffectDisposer: (() => void) | null = null;
+
+    private _isTransitioning = false;
+    private _pendingNav: { path: string } | null = null;
+
+    constructor(routes: RouteDefinition[], opts: IonRouterOutletOptions = {}) {
+        super();
+        this._enableCache = opts.cache ?? true;
+        this._defaultAnimation = opts.defaultAnimation;
+        this._stacks = new StackManager(opts.tabs);
+
+        for (const r of routes) {
+            if (r.path === "*") continue;
+            this._routesByPath.set(r.path, r);
+        }
+
+        if (!opts.skipAutoBootstrap && !_hasActiveRouter()) {
+            createRouter(buildCoreRouteRecords(routes));
+        }
+    }
+
+    private _resolveRouteDefinition(currentPath: string): {
+        def: RouteDefinition;
+        params: Record<string, string>;
+    } | null {
+        const router = nixRouter();
+        const resolved = router.resolve(currentPath);
+        if (!resolved.matched || !resolved.route) return null;
+        const def = this._routesByPath.get(resolved.route.path);
+        if (!def) return null;
+        return { def, params: resolved.params };
+    }
+
+    private _createPageEl(): { pageEl: HTMLElement; lc: PageLifecycle } {
+        const pageEl = document.createElement("ion-page");
+        pageEl.classList.add("ion-page");
+        pageEl.classList.add("ion-page-invisible");
+        const lc = createPageLifecycle();
+        pageEl.addEventListener("ionViewWillEnter", () =>
+            lc.willEnter.update((n) => n + 1));
+        pageEl.addEventListener("ionViewDidEnter", () =>
+            lc.didEnter.update((n) => n + 1));
+        pageEl.addEventListener("ionViewWillLeave", () =>
+            lc.willLeave.update((n) => n + 1));
+        pageEl.addEventListener("ionViewDidLeave", () =>
+            lc.didLeave.update((n) => n + 1));
+        return { pageEl, lc };
+    }
+
+    private _mountComponent(
+        pageEl: HTMLElement,
+        def: RouteDefinition,
+        ctx: PageContext,
+    ): () => void {
+        const node = def.component(ctx);
+        if ("render" in node && typeof (node as NixComponent).render === "function") {
+            const comp = node as NixComponent;
+            comp.onInit?.();
+            const renderCleanup = comp.render()._render(pageEl, null);
+            const mountRet = comp.onMount?.();
+            return () => {
+                comp.onUnmount?.();
+                if (typeof mountRet === "function") mountRet();
+                renderCleanup();
+            };
+        } else {
+            return (node as NixTemplate)._render(pageEl, null);
+        }
+    }
+
+    private _hideInactivePages(activeEl: HTMLElement | null): void {
+        const outletEl = this._outletEl;
+        if (!outletEl) return;
+        const children = Array.from(outletEl.children);
+        for (const child of children) {
+            if (!(child instanceof HTMLElement)) continue;
+            if (child.tagName !== "ION-PAGE" && !child.classList.contains("ion-page")) continue;
+            if (child === activeEl) {
+                child.classList.remove("ion-page-hidden");
+            } else {
+                child.classList.add("ion-page-hidden");
+            }
+        }
+    }
+
+    private async _transitionTo(
+        targetPath: string,
+        intent: NavigationIntent,
+    ): Promise<void> {
+        const outletEl = this._outletEl;
+        if (!outletEl) return;
+
+        const resolved = this._resolveRouteDefinition(targetPath);
+        if (!resolved) return;
+
+        const { def, params } = resolved;
+        const cacheKey = _buildCacheKey(def.path, params);
+        const targetTabKey = this._stacks.keyForPath(targetPath);
+
+        if (cacheKey === this._activeCacheKey && targetTabKey === this._activeTabKey) return;
+
+        if (this._isTransitioning) {
+            this._pendingNav = { path: targetPath };
+            return;
+        }
+        this._isTransitioning = true;
+
+        try {
+            // Page-level guard
+            if (def.beforeEnter) {
+                const cached = this._cache.get(targetTabKey, cacheKey);
+                const lcForGuard = cached?.lc ?? createPageLifecycle();
+                const guardResult = await Promise.resolve(
+                    def.beforeEnter({ lc: lcForGuard, params }),
+                );
+                const parsed = _parseGuardResult(guardResult);
+                if (!parsed.allow) {
+                    if (parsed.redirect) nixRouter().replace(parsed.redirect);
+                    return;
+                }
+            }
+
+            // Resolve entering page
+            let enteringEl: HTMLElement;
+            let isNewlyMounted = false;
+            const cached = this._enableCache
+                ? this._cache.get(targetTabKey, cacheKey)
+                : undefined;
+
+            if (cached) {
+                _resetCachedPageState(cached.pageEl);
+                cached.pageEl.classList.add("ion-page-invisible");
+                enteringEl = cached.pageEl;
+            } else {
+                const { pageEl, lc } = this._createPageEl();
+                const cleanup = this._mountComponent(pageEl, def, { lc, params });
+                if (this._enableCache) {
+                    this._cache.set(targetTabKey, cacheKey, { pageEl, lc, cleanup, cacheKey });
+                }
+                enteringEl = pageEl;
+                isNewlyMounted = true;
+            }
+
+            if (!outletEl.contains(enteringEl)) {
+                outletEl.appendChild(enteringEl);
+            }
+
+            const direction = this._stacks.apply(targetPath, intent);
+            const leavingEl = this._activePageEl;
+
+            // ── First mount (no leaving page) ─────────────────────────
+            if (!leavingEl || leavingEl === enteringEl) {
+                this._activePageEl = enteringEl;
+                this._activeCacheKey = cacheKey;
+                this._activeTabKey = targetTabKey;
+
+                const finalEl = enteringEl;
+                _dispatchIonicLifecycle(finalEl, "ionViewWillEnter");
+
+                if (isNewlyMounted) {
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            finalEl.classList.remove("ion-page-invisible");
+                            this._hideInactivePages(finalEl);
+                            _dispatchIonicLifecycle(finalEl, "ionViewDidEnter");
+                        });
+                    });
+                } else {
+                    finalEl.classList.remove("ion-page-invisible");
+                    this._hideInactivePages(finalEl);
+                    _dispatchIonicLifecycle(finalEl, "ionViewDidEnter");
+                }
+                return;
+            }
+
+            // ── Build commit options ──────────────────────────────────
+            const animationBuilder = (intent.animation ?? this._defaultAnimation) as
+                | undefined | unknown;
+
+            // duration:0 is what Ionic uses for "no animation" navigations.
+            // Empirically, this path skips lifecycle event dispatch — so we
+            // synthesize them manually around the commit() call.
+            const isDuration0 = direction === "root" || direction === "none";
+
+            const commitOpts: any = {
+                duration: isDuration0 ? 0 : undefined,
+                direction:
+                    direction === "back" ? "back"
+                        : direction === "forward" ? "forward"
+                            : undefined,
+                showGoBack: direction === "forward",
+            };
+            if (animationBuilder) commitOpts.animationBuilder = animationBuilder;
+
+            // ── Pre-commit lifecycle (only on duration-0 paths) ───────
+            // Ionic docs: WillLeave fires BEFORE WillEnter.
+            // Animated paths (duration > 0): commit() handles dispatch.
+            if (isDuration0) {
+                _dispatchIonicLifecycle(leavingEl, "ionViewWillLeave");
+                _dispatchIonicLifecycle(enteringEl, "ionViewWillEnter");
+            }
+
+            await (outletEl as any).commit(enteringEl, leavingEl, commitOpts);
+
+            this._activePageEl = enteringEl;
+            this._activeCacheKey = cacheKey;
+            this._activeTabKey = targetTabKey;
+
+            this._hideInactivePages(enteringEl);
+
+            // ── Post-commit lifecycle (only on duration-0 paths) ──────
+            // Ionic docs: DidLeave fires AFTER DidEnter (after the new
+            // page has fully transitioned in).
+            if (isDuration0) {
+                _dispatchIonicLifecycle(enteringEl, "ionViewDidEnter");
+                _dispatchIonicLifecycle(leavingEl, "ionViewDidLeave");
+            }
+
+            if (!this._enableCache && leavingEl.parentElement === outletEl) {
+                leavingEl.remove();
+            }
+        } finally {
+            this._isTransitioning = false;
+
+            if (this._pendingNav) {
+                const next = this._pendingNav;
+                this._pendingNav = null;
+                const router = nixRouter();
+                void this._transitionTo(next.path, router.intent.value);
+            }
+        }
+    }
+
+    override render(): NixTemplate {
+        const self = this;
+        return {
+            __isNixTemplate: true as const,
+
+            mount(container: Element | string) {
+                const el = typeof container === "string"
+                    ? document.querySelector(container)!
+                    : container;
+                const cleanup = this._render(el, null);
+                return { unmount: cleanup };
+            },
+
+            _render(parent: Node, before: Node | null): () => void {
+                const outletEl = document.createElement("ion-router-outlet");
+                self._outletEl = outletEl;
+
+                (outletEl as any).delegate = {
+                    attachViewToDom: (
+                        container: HTMLElement,
+                        component: HTMLElement,
+                    ): HTMLElement => {
+                        if (component && !container.contains(component)) {
+                            container.appendChild(component);
+                        }
+                        return component;
+                    },
+                    removeViewFromDom: async (): Promise<void> => { /* no-op */ },
+                };
+
+                parent.insertBefore(outletEl, before);
+
+                const router: Router = nixRouter();
+                let lastSeenPath: string | null = null;
+                let initialDeferred = false;
+
+                self._routeEffectDisposer = effect(() => {
+                    const path = router.current.value;
+                    const intent = router.intent.value;
+
+                    if (!initialDeferred) {
+                        initialDeferred = true;
+                        queueMicrotask(() => {
+                            const settledPath = router.current.value;
+                            const settledIntent = router.intent.value;
+                            lastSeenPath = settledPath;
+                            void self._transitionTo(settledPath, settledIntent);
+                        });
+                        return;
+                    }
+
+                    if (path === lastSeenPath) return;
+                    lastSeenPath = path;
+                    void self._transitionTo(path, intent);
+                });
+
+                return () => {
+                    self._routeEffectDisposer?.();
+                    self._routeEffectDisposer = null;
+                    for (const { view } of self._cache.all()) {
+                        view.cleanup();
+                        if (view.pageEl.parentElement) view.pageEl.remove();
+                    }
+                    self._cache.clear();
+                    self._activePageEl = null;
+                    self._activeCacheKey = null;
+                    self._activeTabKey = null;
+                    self._outletEl = null;
+                    outletEl.remove();
+                };
+            },
+        };
+    }
+
+    invalidateCache(
+        routePath: string,
+        params?: Record<string, string>,
+        tabKey?: string,
+    ): void {
+        const key = params ? _buildCacheKey(routePath, params) : routePath;
+        const targetTabKey = tabKey ?? this._stacks.keyForPath(routePath);
+        const cached = this._cache.get(targetTabKey, key);
+        if (!cached) return;
+        cached.cleanup();
+        if (cached.pageEl !== this._activePageEl && cached.pageEl.parentElement) {
+            cached.pageEl.remove();
+        }
+        this._cache.delete(targetTabKey, key);
+        if (key === this._activeCacheKey && targetTabKey === this._activeTabKey) {
+            this._activeCacheKey = null;
+        }
+    }
+
+    clearCache(): void {
+        const entries: Array<{ tabKey: string; cacheKey: string; view: CachedView }> = [];
+        for (const e of this._cache.all()) entries.push(e);
+        for (const { tabKey, cacheKey, view } of entries) {
+            if (view.pageEl === this._activePageEl) continue;
+            view.cleanup();
+            if (view.pageEl.parentElement) view.pageEl.remove();
+            this._cache.delete(tabKey, cacheKey);
+        }
+    }
 }

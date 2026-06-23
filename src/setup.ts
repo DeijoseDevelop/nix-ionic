@@ -1,9 +1,22 @@
+/**
+ * @deijose/nix-ionic / setup.ts  —  v2
+ *
+ * BREAKING vs v1: <ion-router> and <ion-route> are NO LONGER registered
+ * automatically. The single-router architecture doesn't use them — all
+ * routing goes through the core router. Removing the imports also drops
+ * a few KB from the bundle.
+ *
+ * If you previously declared <ion-router> directly in your HTML or built
+ * a custom layer on top of it, you now need to register it yourself by
+ * passing `defineIonRouter` and `defineIonRoute` to `setupNixIonic` via the
+ * `components` option. This is intentional — the lib should not pay the
+ * cost of components nobody uses anymore.
+ */
+
 import { initialize } from "@ionic/core/components";
 
-// Minimal core components required for any nix-ionic app
+// Minimal core components — the bare minimum any nix-ionic app needs.
 import { defineCustomElement as defineIonApp } from "@ionic/core/components/ion-app.js";
-import { defineCustomElement as defineIonRouter } from "@ionic/core/components/ion-router.js";
-import { defineCustomElement as defineIonRoute } from "@ionic/core/components/ion-route.js";
 import { defineCustomElement as defineIonRouterOutlet } from "@ionic/core/components/ion-router-outlet.js";
 import { defineCustomElement as defineIonBackButton } from "@ionic/core/components/ion-back-button.js";
 
@@ -16,9 +29,9 @@ export type ComponentDefiner = () => void;
 export type IconDefinitionMap = Record<string, string>;
 
 export interface SetupNixIonicOptions {
-  iconAssetPath?: string;
-  components?: ComponentDefiner[];
-  icons?: IconDefinitionMap;
+    iconAssetPath?: string;
+    components?: ComponentDefiner[];
+    icons?: IconDefinitionMap;
 }
 
 let isInitialized = false;
@@ -26,73 +39,65 @@ let isInitialized = false;
 /**
  * Initialize Ionic Core for Nix.js.
  *
- * By default only the **minimal** components needed for routing are registered
- * (ion-app, ion-router, ion-route, ion-router-outlet, ion-back-button, ion-icon).
+ * Only the minimal set is registered automatically:
+ *   - ion-app
+ *   - ion-router-outlet  (motor de animación; usado por IonRouterOutlet)
+ *   - ion-back-button    (envuelto por IonBackButton)
+ *   - ion-icon
  *
- * Pass additional components via `options.components` to register only what you use:
+ * Pass extra Ionic components explicitly:
  *
  * ```ts
  * import { setupNixIonic } from "@deijose/nix-ionic";
  * import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
- * import { defineIonButton } from "@deijose/nix-ionic/components";
  * import { home, homeOutline } from "ionicons/icons";
  *
  * setupNixIonic({
- *   components: [...layoutComponents, defineIonButton],
+ *   components: [...layoutComponents],
  *   icons: { home, "home-outline": homeOutline },
  * });
  * ```
  */
-export function setupNixIonic(
-  options: SetupNixIonicOptions = {}
-) {
-  if (isInitialized) return;
+export function setupNixIonic(options: SetupNixIonicOptions = {}) {
+    if (isInitialized) return;
 
-  // Ionicons asset configuration
-  const assetPath =
-    options.iconAssetPath ||
-    "https://unpkg.com/ionicons@latest/dist/ionicons/svg/";
-  (window as any).ionicons = { assets: assetPath };
+    const assetPath =
+        options.iconAssetPath ||
+        "https://unpkg.com/ionicons@latest/dist/ionicons/svg/";
+    (window as any).ionicons = { assets: assetPath };
 
-  initialize();
+    initialize();
 
-  // Register minimal core components (always needed)
-  const coreComponents: ComponentDefiner[] = [
-    defineIonApp,
-    defineIonRouter,
-    defineIonRoute,
-    defineIonRouterOutlet,
-    defineIonBackButton,
-    defineIonIcon,
-  ];
+    const coreComponents: ComponentDefiner[] = [
+        defineIonApp,
+        defineIonRouterOutlet,
+        defineIonBackButton,
+        defineIonIcon,
+    ];
 
-  for (let i = 0; i < coreComponents.length; i++) {
-    const def = coreComponents[i];
-    def();
-  }
-
-  // Register user-provided components
-  if (options.components) {
-    for (let i = 0; i < options.components.length; i++) {
-      const def = options.components[i];
-      def();
+    for (let i = 0; i < coreComponents.length; i++) {
+        coreComponents[i]();
     }
-  }
 
-  // Register critical navigation icons + optional app icons
-  const defaultIcons: IconDefinitionMap = {
-    "arrow-back": arrowBack,
-    "arrow-back-sharp": arrowBackSharp,
-    "chevron-back": chevronBack,
-    "chevron-back-sharp": chevronBackSharp,
-  };
+    if (options.components) {
+        for (let i = 0; i < options.components.length; i++) {
+            options.components[i]();
+        }
+    }
 
-  addIcons({
-    ...defaultIcons,
-    ...(options.icons ?? {}),
-  });
+    const defaultIcons: IconDefinitionMap = {
+        "arrow-back": arrowBack,
+        "arrow-back-sharp": arrowBackSharp,
+        "chevron-back": chevronBack,
+        "chevron-back-sharp": chevronBackSharp,
+    };
 
-  isInitialized = true;
+    addIcons({
+        ...defaultIcons,
+        ...(options.icons ?? {}),
+    });
+
+    isInitialized = true;
 }
 
 export { addIcons };
