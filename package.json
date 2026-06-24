@@ -1,6 +1,6 @@
 {
   "name": "@deijose/nix-ionic",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "description": "Ionic lifecycle & router bridge for Nix.js",
   "license": "MIT",
   "author": "Deiver Vasquez",
