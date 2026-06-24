@@ -1081,6 +1081,44 @@ Register it in `main.ts`:
 
 ---
 
+## Testing
+
+`@deijose/nix-ionic` uses **Vitest** with `happy-dom` and `@deijose/nix-js-testing` for unit tests and coverage.
+
+### Run the test suite
+
+```bash
+npm run test
+```
+
+### Run tests with coverage
+
+```bash
+npm run test:coverage
+```
+
+Coverage reports are generated in the `coverage/` directory.
+
+### Test stack
+
+- **Vitest** — test runner and assertion framework.
+- **happy-dom** — lightweight DOM implementation for component tests.
+- **@deijose/nix-js-testing** — `render`, `cleanup`, `fireEvent`, `screen`, and `waitFor` helpers for Nix.js components.
+- **Mock Ionic components** — located in `src/__tests__/mocks/ionic.ts` to simulate `ion-router-outlet`, `ion-back-button`, and other Ionic custom elements without loading the full `@ionic/core` bundle.
+
+### Writing tests
+
+Tests live in `src/__tests__/`. Each major module has its own test file:
+
+- `setup.test.ts` — `setupNixIonic()` and component/icon registration.
+- `lifecycle.test.ts` — `IonPage`, `createPageLifecycle`, and lifecycle composables.
+- `tabs.test.ts` — `createBottomTabBar` and tab navigation behavior.
+- `components.test.ts` — individual component definers.
+- `bundles.test.ts` — component bundle exports.
+- `IonRouterOutlet.test.ts` — routing, guards, cache, lifecycle hooks, and back button.
+
+Use `waitFor` for reactive DOM updates and reset the global router state between tests with `_resetRouter()` from `@deijose/nix-js/router` when needed.
+
 ## Build for production
 
 ```bash

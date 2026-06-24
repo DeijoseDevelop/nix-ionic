@@ -84,7 +84,9 @@ export function createBottomTabBar(
         }}
     >
       ${tabs.map((tab) => {
-            const computedTabId = _normalizePath(tab.path).replace(/\//g, "-");
+            const computedTabId = tab.path === "/"
+                ? ""
+                : _normalizePath(tab.path).replace(/\//g, "-");
             const tabId = tab.tabId ?? (computedTabId || "root");
 
             return html`

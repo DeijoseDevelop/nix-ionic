@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import dts from "vite-plugin-dts";
 import { resolve } from "path";
 
@@ -32,5 +32,17 @@ export default defineConfig({
     },
     test: {
         environment: "happy-dom",
+        globals: true,
+        setupFiles: ["./src/__tests__/setup.ts"],
+        coverage: {
+            provider: "v8",
+            reporter: ["text", "text-summary", "lcov", "html"],
+            include: ["src/**/*.ts"],
+            exclude: [
+                "src/**/*.d.ts",
+                "src/__tests__/**",
+                "src/**/__tests__/**",
+            ],
+        },
     },
 });
