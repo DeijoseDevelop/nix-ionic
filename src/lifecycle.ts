@@ -60,10 +60,6 @@ export abstract class IonPage extends NixComponent {
     ionViewDidLeave?(): void;
 }
 
-// -----------------------------------------------------------------------------
-//  Composables for function-component style pages
-// -----------------------------------------------------------------------------
-
 export function useIonViewWillEnter(lc: PageLifecycle, fn: () => void): void {
     watch(lc.willEnter, fn);
 }

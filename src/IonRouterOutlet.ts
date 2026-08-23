@@ -50,10 +50,6 @@ import {
 } from "@deijose/nix-js";
 import { createPageLifecycle, type PageLifecycle } from "./lifecycle";
 
-// =============================================================================
-//  Public types
-// =============================================================================
-
 export type GuardResult =
     | boolean
     | string
@@ -78,10 +74,6 @@ export interface IonRouterOutletOptions {
     tabs?: string[];
     skipAutoBootstrap?: boolean;
 }
-
-// =============================================================================
-//  Helpers
-// =============================================================================
 
 function adaptGuardForCore(
     routePath: string,
@@ -183,10 +175,6 @@ function _dispatchIonicLifecycle(
     }));
 }
 
-// =============================================================================
-//  Stack manager
-// =============================================================================
-
 interface TabStack {
     prefix: string;
     entries: string[];
@@ -263,10 +251,6 @@ class StackManager {
     }
 }
 
-// =============================================================================
-//  Cache registry
-// =============================================================================
-
 class CacheRegistry {
     private _byTab = new Map<string, Map<string, CachedView>>();
 
@@ -296,10 +280,6 @@ class CacheRegistry {
         this._byTab.clear();
     }
 }
-
-// =============================================================================
-//  IonBackButton
-// =============================================================================
 
 export function IonBackButton(defaultHref: string = "/"): NixTemplate {
     return {
@@ -333,10 +313,6 @@ export function IonBackButton(defaultHref: string = "/"): NixTemplate {
         },
     };
 }
-
-// =============================================================================
-//  IonRouterOutlet
-// =============================================================================
 
 export class IonRouterOutlet extends NixComponent {
     private _routesByPath = new Map<string, RouteDefinition>();
@@ -501,7 +477,6 @@ export class IonRouterOutlet extends NixComponent {
             const direction = this._stacks.apply(targetPath, intent);
             const leavingEl = this._activePageEl;
 
-            // ── First mount (no leaving page) ─────────────────────────
             if (!leavingEl || leavingEl === enteringEl) {
                 this._activePageEl = enteringEl;
                 this._activeCacheKey = cacheKey;
@@ -526,7 +501,6 @@ export class IonRouterOutlet extends NixComponent {
                 return;
             }
 
-            // ── Build commit options ──────────────────────────────────
             const animationBuilder = (intent.animation ?? this._defaultAnimation) as
                 | undefined | unknown;
 
@@ -545,7 +519,6 @@ export class IonRouterOutlet extends NixComponent {
             };
             if (animationBuilder) commitOpts.animationBuilder = animationBuilder;
 
-            // ── Pre-commit lifecycle (only on duration-0 paths) ───────
             // Ionic docs: WillLeave fires BEFORE WillEnter.
             // Animated paths (duration > 0): commit() handles dispatch.
             if (isDuration0) {
@@ -561,7 +534,6 @@ export class IonRouterOutlet extends NixComponent {
 
             this._hideInactivePages(enteringEl);
 
-            // ── Post-commit lifecycle (only on duration-0 paths) ──────
             // Ionic docs: DidLeave fires AFTER DidEnter (after the new
             // page has fully transitioned in).
             if (isDuration0) {
