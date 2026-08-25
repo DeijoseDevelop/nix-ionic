@@ -21,7 +21,7 @@
  *   - <slot name="bottom"> for the tab bar
  */
 
-import { html } from "@deijose/nix-js";
+import { html, NixComponent } from "@deijose/nix-js";
 import type { NixTemplate } from "@deijose/nix-js";
 import { nixRouter, type NavigationDirection } from "@deijose/nix-js";
 import { addIcons, type IconDefinitionMap } from "./setup.js";
@@ -180,12 +180,16 @@ export function createBottomTabBar(
  * ```
  */
 export function createTabsLayout(
-    outlet: NixTemplate,
+    outlet: NixTemplate | NixComponent,
     tabBar: NixTemplate,
 ): NixTemplate {
+    // IonRouterOutlet extends NixComponent, which is not a NixTemplate.
+    // NixComponent has a render() method that returns a NixTemplate.
+    // When given a NixComponent, we call render() to get the template.
+    const outletTemplate = outlet instanceof NixComponent ? outlet.render() : outlet;
     return html`
         <ion-tabs>
-            ${outlet}
+            ${outletTemplate}
             ${tabBar}
         </ion-tabs>
     `;
