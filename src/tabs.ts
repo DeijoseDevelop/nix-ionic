@@ -130,7 +130,9 @@ export function createBottomTabBar(
             return html`
           <ion-tab-button
             tab=${tabId}
+            layout="icon-top"
             class=${() => (_isActive(tab, router.current.value) ? activeClassName : "")}
+            .selected=${() => _isActive(tab, router.current.value)}
             @click=${() => {
                     // If we're already on this tab's tree, going to its root
                     // is a "back to root" — use replace to avoid stack growth.
