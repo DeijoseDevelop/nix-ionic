@@ -298,13 +298,18 @@ nav.activeTab;           // active tab prefix
 
 Reactive overlay controllers using the `create*` pattern (like `createStore`, `createRouter`).
 
+`createPopover()` and `createModal()` automatically inject a Nix.js framework
+delegate when `component` is a function (e.g. `() => html\`...\``), so you can
+pass Nix.js templates as overlay content without any extra setup.
+
 ```ts
 import { html } from "@deijose/nix-js";
-import { createToast, createAlert, createModalController, confirm, withLoading } from "@deijose/nix-ionic";
+import { createToast, createAlert, createModal, createPopover, confirm, withLoading } from "@deijose/nix-ionic";
 
 function MyPage() {
   const toast = createToast();
-  const modal = createModalController();
+  const modal = createModal();
+  const popover = createPopover();
 
   const save = async () => {
     await withLoading({ message: "Saving..." }, async () => {
@@ -317,15 +322,29 @@ function MyPage() {
     component: () => html`<ion-content><h1>Modal content mounted by Nix.js!</h1></ion-content>`,
   });
 
+  const openPopover = (event: Event) => popover.present({
+    event,
+    component: () => html`
+      <div style="padding: 20px;">
+        <ion-button @click=${() => popover.dismiss()}>Close</ion-button>
+      </div>
+    `,
+  });
+
   return html`
     <ion-content>
       <ion-button @click=${save}>Save</ion-button>
       <ion-button @click=${openModal}>Open Modal</ion-button>
+      <ion-button @click=${(e: Event) => openPopover(e)}>Open Popover</ion-button>
       ${() => modal.presented.value ? html`<p>Modal is open</p>` : null}
     </ion-content>
   `;
 }
 ```
+
+> **Note:** The framework delegate is injected automatically when
+> `component` is a function. If you pass a string (tag name) or
+> `HTMLElement`, no delegate is needed and Ionic handles it natively.
 
 ### Available controllers
 
@@ -335,11 +354,9 @@ function MyPage() {
 | `createAlert()` | Reactive alert |
 | `createLoading()` | Reactive loading spinner |
 | `createActionSheet()` | Reactive action sheet |
-| `createPopover()` | Reactive popover |
-| `createModal()` | Basic modal (no delegate) |
-| `createModalController()` | Modal with Nix.js delegate (mounts `html\`\`` inside) |
-| `createPopoverController()` | Popover with Nix.js delegate |
-| `createPicker()` | Column-based picker |
+| `createPopover()` | Reactive popover (auto-injects Nix.js delegate for `component: () => html\`...\``) |
+| `createModal()` | Reactive modal (auto-injects Nix.js delegate for `component: () => html\`...\``) |
+| `createPicker()` | Column-based picker (lazy-registers `ion-picker-legacy`) |
 
 ### One-shot helpers
 
@@ -412,18 +429,74 @@ All methods are **no-ops on web** — safe to call unconditionally.
 ## Tabs
 
 ```ts
-import { createBottomTabBar } from "@deijose/nix-ionic";
+import { createBottomTabBar, createTabsLayout, IonRouterOutlet, NavigationManager } from "@deijose/nix-ionic";
+import { home, search, person, settings } from "ionicons/icons";
 
-const tabs = createBottomTabBar([
-  { path: "/", label: "Home", icon: "home-outline", activeIcon: "home", exact: true },
-  { path: "/search", label: "Search", icon: "search-outline", activeIcon: "search" },
-  { path: "/profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
-], {
-  hideWhen: (path) => path === "/login",
+const nav = new NavigationManager({ tabs: ["/", "/search", "/profile", "/settings"] });
+
+const outlet = new IonRouterOutlet(routes, {
+  tabs: ["/", "/search", "/profile", "/settings"],
+  navigation: nav,
 });
 
-html`<ion-app>${outlet}${tabs}</ion-app>`;
+const tabBar = createBottomTabBar([
+  { path: "/", label: "Home", icon: "home", exact: true },
+  { path: "/search", label: "Search", icon: "search" },
+  { path: "/profile", label: "Profile", icon: "person", badge: "!" },
+  { path: "/settings", label: "Settings", icon: "settings" },
+], {
+  hiddenPaths: ["/detail/*", "/profile/edit"],
+  icons: { home, search, person, settings },
+  cssVars: {
+    "--background": "var(--app-tab-bg)",
+    "--color-selected": "var(--ion-color-primary)",
+  },
+});
+
+// Wrap outlet + tab bar in <ion-tabs> with correct CSS layout
+const tabsLayout = createTabsLayout(outlet, tabBar);
+
+html`<ion-app>${tabsLayout}</ion-app>`;
 ```
+
+### How tabs work
+
+- **Navigation** is driven by the Nix.js router, not Ionic's internal tab
+  selection. Each `ion-tab-button` has `@click.prevent.stop` to prevent
+  Ionic's `select()` (which expects `<ion-tab>` children we don't use).
+- **`createTabsLayout()`** wraps the outlet and tab bar in `<ion-tabs>`
+  and injects a small CSS snippet to ensure the tab bar sits at the
+  bottom and the outlet fills the remaining space.
+- **Tab IDs** are derived from the path: `/` → `root`, `/search` →
+  `search`, `/profile/edit` → `profile-edit`. Override with `tabId`.
+- **`selected` state** is set via JS property (`(btn as any).selected =
+  isActive`) using a `ref` + `effect` + `nextTick`, because Stencil
+  boolean props can't be set via HTML attributes with Nix.js.
+
+### Tab bar options
+
+| Option | Type | Description |
+|---|---|---|
+| `slot` | `"top" \| "bottom"` | Tab bar position (default: `"bottom"`) |
+| `layout` | `TabButtonLayout` | Icon/label layout (default: `"icon-top"`) |
+| `hiddenPaths` | `string[]` | Paths where tab bar is hidden (supports `*` wildcards) |
+| `hideWhen` | `(path: string) => boolean` | Dynamic hide callback |
+| `icons` | `Record<string, IconDefinition>` | Icon SVG data for tab icons |
+| `cssVars` | `Record<string, string>` | CSS custom properties on `ion-tab-bar` |
+| `direction` | `NavigationDirection` | Navigation direction on tab switch (default: `"none"`) |
+
+### Tab item options
+
+| Option | Type | Description |
+|---|---|---|
+| `path` | `string` | Route path |
+| `label` | `string` | Tab label text |
+| `icon` | `string` | Icon name (kebab-case) |
+| `activeIcon` | `string` | Icon name when active (optional) |
+| `exact` | `boolean` | Exact path match (default: `false`) |
+| `tabId` | `string` | Override auto-generated tab ID |
+| `badge` | `string \| number` | Badge content |
+| `badgeColor` | `string` | Badge color (default: `"danger"`) |
 
 ## Vite plugin
 
@@ -448,6 +521,74 @@ Features:
 - Scans `name="icon-name"` on `<ion-icon>` → generates `ionicons/icons` imports
 - Warns on dynamic tags/icons (with allowlist suppression)
 - `nixIonic({ allowTags: [...], allowIcons: [...] })` for dynamic usage
+
+### `allowTags` and `allowIcons` (important for lazy-loaded pages)
+
+The Vite plugin scans your source files for `<ion-*>` tags and `name="icon-name"`
+attributes, then generates a virtual module that imports and registers only what
+you use. However, in dev mode, Vite loads modules on-demand. The virtual module
+is served when your app entry imports it at startup, but pages loaded lazily by
+the router may not have been scanned yet.
+
+**Use `allowTags` and `allowIcons` to explicitly list tags/icons used in
+lazy-loaded pages.** The plugin emits warnings when it detects tags or icons
+that are not in the allowlists, so you know exactly what to add:
+
+```
+[nix-ionic] Tags used in src/pages/HomePage.ts but not in allowTags:
+ion-header, ion-toolbar, ion-title, ion-content, ion-button, ...
+Add them to `nixIonic({ allowTags: [...] })` to ensure they are
+registered before first use.
+
+[nix-ionic] Icons used in src/pages/HomePage.ts but not in allowIcons:
+flash-outline, leaf-outline, toast-outline, ...
+Add them to `nixIonic({ allowIcons: [...] })` to ensure they are
+registered before first use.
+```
+
+If new tags/icons are discovered after the registration module was already
+served, an additional warning is emitted:
+
+```
+[nix-ionic] New tags discovered after registration: ion-header, ...
+These were NOT included in the registration module. Add them to
+allowTags and reload.
+```
+
+Example with full allowlists:
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import { nix } from "@deijose/vite-plugin-nix-js";
+import { nixIonic } from "@deijose/nix-ionic/vite-plugin";
+
+export default defineConfig({
+  plugins: [
+    nix(),
+    nixIonic({
+      allowTags: [
+        "ion-app", "ion-header", "ion-toolbar", "ion-title", "ion-content",
+        "ion-buttons", "ion-button", "ion-back-button",
+        "ion-tab-bar", "ion-tab-button",
+        "ion-list", "ion-item", "ion-label",
+        "ion-card", "ion-card-content",
+        "ion-input", "ion-toggle", "ion-select", "ion-select-option",
+        "ion-icon", "ion-chip", "ion-badge",
+        // Overlays (programmatic)
+        "ion-toast", "ion-alert", "ion-loading",
+        "ion-action-sheet", "ion-popover", "ion-modal",
+      ],
+      allowIcons: [
+        "home", "search", "person", "settings",
+        "arrow-back", "arrow-forward",
+        "share-outline", "link-outline",
+        // ... all icons used in your templates
+      ],
+    }),
+  ],
+});
+```
 
 ## API reference
 
@@ -474,10 +615,7 @@ Features:
 |---|---|
 | `createToast()` / `createAlert()` / `createLoading()` | Reactive overlay controllers |
 | `createActionSheet()` / `createPopover()` / `createModal()` | Reactive overlay controllers |
-| `createPicker()` | Column-based picker |
-| `createModalController(delegate?)` | Modal with Nix.js delegate |
-| `createPopoverController(delegate?)` | Popover with Nix.js delegate |
-| `createNixDelegate()` | Nix.js FrameworkDelegate for overlays |
+| `createPicker()` | Column-based picker (lazy-registers `ion-picker-legacy`) |
 | `showToast(opts)` | One-shot toast |
 | `withLoading(opts, task)` | Loading + async task + auto-dismiss |
 | `confirm(opts)` | Promise-based confirm dialog |

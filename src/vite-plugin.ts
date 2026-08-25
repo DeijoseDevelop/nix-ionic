@@ -174,12 +174,18 @@ export function generateRegistrationModule(
     // Import icons from ionicons/icons
     const iconArray = [...icons].sort();
     if (iconArray.length > 0) {
+        // ionicons/icons exports icons in camelCase (e.g. `home`, `alertCircleOutline`).
+        // We import them as camelCase identifiers and map them to kebab-case names
+        // in the registerIonicons() call below.
+        // NOTE: `import { foo as "string" }` is NOT valid JS syntax — aliases must
+        // be identifiers. The kebab-case name goes in the object literal instead.
         const iconImports = iconArray.map((name) => {
             // Convert kebab-case to camelCase for ionicons/icons export
-            const camelName = name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-            return `${camelName} as "${name}"`;
+            return name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
         });
-        lines.push(`import { ${iconImports.join(", ")} } from "ionicons/icons";`);
+        // Deduplicate in case two kebab names map to the same camelCase
+        const uniqueImports = [...new Set(iconImports)];
+        lines.push(`import { ${uniqueImports.join(", ")} } from "ionicons/icons";`);
     }
 
     lines.push("");
@@ -285,6 +291,17 @@ export function nixIonic(options: NixIonicPluginOptions = {}): Plugin {
                         `[nix-ionic] Tags used in ${shortId} but not in allowTags: ` +
                         `${unlistedTags.join(", ")}. ` +
                         "Add them to `nixIonic({ allowTags: [...] })` to ensure " +
+                        "they are registered before first use.",
+                    );
+                }
+                // Warn about icons detected but not in allowIcons.
+                const unlistedIcons = [...result.icons].filter((i) => !allowIconSet.has(i));
+                if (unlistedIcons.length > 0) {
+                    const shortId = id.replace(process.cwd() + "/", "");
+                    this.warn(
+                        `[nix-ionic] Icons used in ${shortId} but not in allowIcons: ` +
+                        `${unlistedIcons.join(", ")}. ` +
+                        "Add them to `nixIonic({ allowIcons: [...] })` to ensure " +
                         "they are registered before first use.",
                     );
                 }

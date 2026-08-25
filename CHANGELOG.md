@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.7]
+
+### Added
+
+- **Nix.js framework delegate for overlays** — `createPopover()` and
+  `createModal()` now automatically inject a Nix.js `FrameworkDelegate`
+  when `component` is a function (e.g. `() => html\`...\``). This fixes
+  the `"framework delegate is missing"` error that occurred when passing
+  Nix.js templates as overlay content. The delegate uses `mount()` to
+  render the template inside the overlay and `unmount()` on dismiss.
+- **Vite plugin warnings for unlisted icons** — when the plugin detects
+  `name="icon-name"` on `<ion-icon>` in templates and the icon is not in
+  `allowIcons`, it now emits a warning listing the icons and the file.
+  This complements the existing tag warnings and helps catch missing
+  icon registrations caused by lazy-loaded pages.
+
+### Fixed
+
+- **Tab IDs no longer have leading hyphens** — `_normalizePath("/search")`
+  produced `-search` (with a leading `-`) because the leading `/` was
+  replaced with `-`. Now `/search` → `search`, `/profile` → `profile`,
+  and `/` → `root`. This fixes the `[ion-tabs] Tab with id: "undefined"
+  does not exist` error that occurred on tab clicks.
+- **Tab bar now renders at the bottom** — `ion-tabs` defaults to
+  `display: block` with no explicit height, which collapsed the layout
+  because `ion-router-outlet` is `position: absolute`. A small CSS
+  snippet is now injected by `createTabsLayout()` to force `ion-tabs`
+  into a flexbox column layout where the outlet fills the available
+  space and the tab bar sits at the bottom.
+- **Tab click no longer triggers Ionic's internal `select()`** — the
+  `@click` handler on `ion-tab-button` now uses Nix.js event modifiers
+  (`@click.prevent.stop`) to prevent Ionic's internal tab selection
+  (which looks for `<ion-tab>` children we don't have). Navigation is
+  driven entirely by the Nix.js router.
+- **Invalid `import { foo as "string" }` syntax in generated module** —
+  the Vite plugin was generating `import { alertCircleOutline as
+  "alert-circle-outline" } from "ionicons/icons"` which is not valid
+  JavaScript (alias must be an identifier, not a string). Now generates
+  `import { alertCircleOutline } from "ionicons/icons"` and maps
+  kebab-case names in the `registerIonicons({ ... })` call instead.
+
+---
+
 ## [2.0.6]
 
 ### Added

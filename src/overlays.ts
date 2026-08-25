@@ -133,6 +133,59 @@ import {
     pickerController,
 } from "@ionic/core";
 
+// --- Nix.js framework delegate for overlays ---
+// Ionic overlays (popover, modal) need a "framework delegate" to render
+// content when `component` is not a string tag name or HTMLElement.
+// We provide a delegate that uses Nix.js `mount()` to render templates.
+
+interface FrameworkDelegate {
+    attachViewToDom: (
+        parentElement: HTMLElement,
+        userComponent: unknown,
+        userComponentProps?: Record<string, unknown>,
+        cssClasses?: string[],
+    ) => Promise<HTMLElement>;
+    removeViewFromDom: (
+        parentElement: HTMLElement,
+        childElement: HTMLElement,
+    ) => Promise<void>;
+}
+
+let _delegateHandle: { unmount: () => void } | null = null;
+
+const nixDelegate: FrameworkDelegate = {
+    async attachViewToDom(parentElement, userComponent, _props, cssClasses) {
+        // If userComponent is a function (NixTemplate factory), call it and mount
+        if (typeof userComponent === "function") {
+            const template = (userComponent as () => NixTemplate)();
+            const handle = mount(template, parentElement);
+            _delegateHandle = handle;
+            return parentElement;
+        }
+        // If userComponent is a string, create the element
+        if (typeof userComponent === "string") {
+            const el = document.createElement(userComponent);
+            if (cssClasses) cssClasses.forEach((c) => el.classList.add(c));
+            parentElement.appendChild(el);
+            return el;
+        }
+        // If userComponent is an HTMLElement, append it
+        if (userComponent instanceof HTMLElement) {
+            if (cssClasses) cssClasses.forEach((c) => userComponent.classList.add(c));
+            parentElement.appendChild(userComponent);
+            return userComponent;
+        }
+        // Fallback: just return the parent
+        return parentElement;
+    },
+    async removeViewFromDom(_parent, _child) {
+        if (_delegateHandle) {
+            _delegateHandle.unmount();
+            _delegateHandle = null;
+        }
+    },
+};
+
 // --- Types ---
 
 export interface OverlayHandle<TDetail = unknown> {
@@ -177,7 +230,16 @@ function createOverlayHandle<TDetail>(
         }
 
         const token = (active?.token ?? 0) + 1;
-        const el = await controller.create(options);
+
+        // If `component` is a function (NixTemplate factory), inject our
+        // framework delegate so Ionic can render Nix.js templates inside
+        // popover/modal overlays.
+        const opts = { ...options };
+        if (typeof opts.component === "function" && !opts.delegate) {
+            opts.delegate = nixDelegate;
+        }
+
+        const el = await controller.create(opts);
         await el.present();
         active = { el, dismissPromise: el.onDidDismiss?.() ?? Promise.resolve(null), token };
         presented.value = true;

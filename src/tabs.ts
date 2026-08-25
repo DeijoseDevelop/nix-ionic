@@ -176,15 +176,18 @@ export function createBottomTabBar(
     >
       ${tabs.map((tab) => {
             const computedTabId = tab.path === "/"
-                ? ""
-                : _normalizePath(tab.path).replace(/\//g, "-");
-            const tabId = tab.tabId ?? (computedTabId || "root");
+                ? "root"
+                : _normalizePath(tab.path).replace(/^\//, "").replace(/\//g, "-");
+            const tabId = tab.tabId ?? computedTabId;
 
             return html`
           <ion-tab-button
             tab=${tabId}
             layout=${layout}
-            @click=${() => {
+            @click.prevent.stop=${() => {
+                    // .prevent.stop prevents Ionic's internal tab selection
+                    // (which looks for <ion-tab> children we don't have).
+                    // We drive navigation through the Nix.js router instead.
                     if (_isActive(tab, router.current.value)) {
                         router.replace(tab.path, { direction: "none" });
                     } else {
@@ -214,13 +217,25 @@ export function createBottomTabBar(
 }
 
 /**
- * Wraps an IonRouterOutlet and a tab bar in <ion-tabs>, providing the
- * correct CSS layout context.
+ * Wraps an IonRouterOutlet and a tab bar in <ion-tabs>.
+ *
+ * <ion-tabs> provides the correct CSS layout context: the outlet fills
+ * the available space and the tab bar sits at the bottom (or top).
+ *
+ * We use <ion-tabs> for layout only — navigation is driven by the
+ * Nix.js router via the @click handler on each <ion-tab-button>, not
+ * by Ionic's internal tab selection. The tab buttons have `tab` IDs
+ * so Ionic doesn't warn, but there are no <ion-tab> children.
+ *
+ * A small CSS snippet is injected to ensure <ion-tabs> fills its
+ * parent and the absolutely-positioned <ion-router-outlet> doesn't
+ * collapse the layout.
  */
 export function createTabsLayout(
     outlet: NixTemplate | NixComponent,
     tabBar: NixTemplate,
 ): NixTemplate {
+    _injectTabsLayoutStyles();
     const outletTemplate = outlet instanceof NixComponent ? outlet.render() : outlet;
     return html`
         <ion-tabs>
@@ -228,4 +243,40 @@ export function createTabsLayout(
             ${tabBar}
         </ion-tabs>
     `;
+}
+
+/** Inject the tabs layout CSS once (idempotent). */
+let _tabsStylesInjected = false;
+function _injectTabsLayoutStyles(): void {
+    if (_tabsStylesInjected) return;
+    if (typeof document === "undefined") return;
+    _tabsStylesInjected = true;
+    const style = document.createElement("style");
+    style.id = "nix-ionic-tabs-layout";
+    // ion-tabs defaults to display:block with no explicit height, which
+    // collapses to the tab bar's height because ion-router-outlet is
+    // position:absolute. Force ion-tabs to fill its parent and use flexbox
+    // so the outlet takes the remaining space above the tab bar.
+    style.textContent = `
+ion-tabs {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    width: 100% !important;
+    position: relative !important;
+}
+ion-tabs > ion-router-outlet {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    position: relative !important;
+    top: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+}
+ion-tabs > ion-tab-bar {
+    flex-shrink: 0 !important;
+}
+`;
+    document.head.appendChild(style);
 }
