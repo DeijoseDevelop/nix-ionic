@@ -158,8 +158,11 @@ export function generateRegistrationModule(
         "",
     ];
 
-    // Import component definers
-    const tagArray = [...tags].sort();
+    // Import component definers.
+    // Skip core tags that initializeNixIonic() already registers:
+    // ion-app, ion-router-outlet, ion-back-button, ion-icon.
+    const CORE_TAGS = new Set(["ion-app", "ion-router-outlet", "ion-back-button", "ion-icon"]);
+    const tagArray = [...tags].sort().filter((t) => !CORE_TAGS.has(t));
     const definerNames: string[] = [];
     for (const tag of tagArray) {
         const subpath = tagToSubpath(tag);

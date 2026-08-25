@@ -218,6 +218,22 @@ describe("nixIonic Vite plugin", () => {
             expect(output).not.toMatch(/registerIonicComponents\(/);
             expect(output).not.toMatch(/registerIonicons\(/);
         });
+
+        it("skips core tags that initializeNixIonic already registers", () => {
+            const output = generateRegistrationModule(
+                new Set(["ion-app", "ion-router-outlet", "ion-back-button", "ion-icon", "ion-button"]),
+                new Set(),
+                {},
+            );
+            // ion-button should generate an import
+            expect(output).toContain(`import { defineIonButton } from "@deijose/nix-ionic/components/button"`);
+            // Core tags should NOT generate imports
+            expect(output).not.toContain("components/app");
+            expect(output).not.toContain("components/router-outlet");
+            expect(output).not.toContain("components/back-button");
+            // ion-icon is handled by registerIonicons, not components
+            expect(output).not.toMatch(/import.*components\/icon/);
+        });
     });
 
     describe("manifest helpers", () => {
