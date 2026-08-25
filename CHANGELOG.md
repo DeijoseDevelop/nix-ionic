@@ -69,7 +69,8 @@ policies, optional Capacitor, and leak-free lifecycle.
 ### Documentation
 
 - [MIGRATION.md](./MIGRATION.md) — full 1.x → 2.0 migration guide
-- [PHASE0.md](./PHASE0.md) — development roadmap and status
+- Architecture document: `docs/arquitecturas/ARCHITECTURA_TECNICA_NIX_JS_IONIC.md`
+  (in the monorepo `docs/` directory)
 - README "Limitations" section: iOS swipe-back documented as unsupported
 
 ### Migration
