@@ -7,11 +7,24 @@
  * Tab switches are intentionally direction:"none" — Ionic's convention is no
  * animation between tabs. Per-tab stacks (configured on IonRouterOutlet via
  * `tabs: [...]`) preserve each tab's deep view across switches.
+ *
+ * v2.0.2 fix: The tab bar is now wrapped in <ion-tabs> which provides the
+ * correct CSS layout context (position: absolute for the outlet, slot="bottom"
+ * for the tab bar). Without <ion-tabs>, ion-tab-bar has no positioning and
+ * appears at the top of the flex flow, and ion-router-outlet (position:absolute;
+ * inset:0) covers it completely.
+ *
+ * ion-tabs is a pure layout container in Ionic Core — it does NOT do routing.
+ * Routing is handled by ion-router-outlet inside it. ion-tabs only provides:
+ *   - display: flex; flex-direction: column
+ *   - .tabs-inner { flex: 1; position: relative } for the default slot
+ *   - <slot name="bottom"> for the tab bar
  */
 
 import { html } from "@deijose/nix-js";
 import type { NixTemplate } from "@deijose/nix-js";
 import { nixRouter, type NavigationDirection } from "@deijose/nix-js";
+import { addIcons, type IconDefinitionMap } from "./setup.js";
 
 export interface BottomTabItem {
     path: string;
@@ -33,6 +46,24 @@ export interface BottomTabBarOptions {
      */
     navigationDirection?: NavigationDirection;
     hideWhen?: (path: string) => boolean;
+    /**
+     * Icon SVG data to register for the tab bar icons.
+     *
+     * The Vite plugin can only detect static `name="icon-name"` in html``
+     * templates. Tab bar icons are dynamic (`name=${() => tab.icon}`), so
+     * the plugin can't detect them. Pass the icon data here and
+     * `createBottomTabBar` will call `addIcons()` internally.
+     *
+     * @example
+     * ```ts
+     * import { home, search, person, settings } from "ionicons/icons";
+     *
+     * createBottomTabBar(tabs, {
+     *   icons: { home, search, person, settings },
+     * });
+     * ```
+     */
+    icons?: IconDefinitionMap;
 }
 
 function _normalizePath(p: string): string {
@@ -70,6 +101,13 @@ export function createBottomTabBar(
     const className = options.className ?? "nix-ion-tab-bar";
     const activeClassName = options.activeClassName ?? "tab-selected";
     const direction: NavigationDirection = options.navigationDirection ?? "none";
+
+    // Register icons if provided. The Vite plugin can't detect dynamic
+    // icon names (name=${() => tab.icon}), so the consumer must pass
+    // the icon SVG data via the `icons` option.
+    if (options.icons) {
+        addIcons(options.icons);
+    }
 
     return html`
     <ion-tab-bar
@@ -119,4 +157,36 @@ export function createBottomTabBar(
         })}
     </ion-tab-bar>
   `;
+}
+
+/**
+ * Wraps an IonRouterOutlet and a tab bar in <ion-tabs>, providing the
+ * correct CSS layout context.
+ *
+ * <ion-tabs> is a pure layout container in Ionic Core:
+ *   - display: flex; flex-direction: column
+ *   - .tabs-inner { flex: 1; position: relative } → outlet goes here
+ *   - <slot name="bottom"> → tab bar goes here
+ *
+ * Without <ion-tabs>, ion-tab-bar has no positioning (it relies on
+ * ion-tabs for position:absolute; bottom:0), and ion-router-outlet
+ * (position:absolute; inset:0) covers the tab bar completely.
+ *
+ * @example
+ * ```ts
+ * const tabBar = createBottomTabBar(tabs, { icons: { home, search } });
+ * const layout = createTabsLayout(outlet, tabBar);
+ * mount(new App(layout), "#app");
+ * ```
+ */
+export function createTabsLayout(
+    outlet: NixTemplate,
+    tabBar: NixTemplate,
+): NixTemplate {
+    return html`
+        <ion-tabs>
+            ${outlet}
+            ${tabBar}
+        </ion-tabs>
+    `;
 }

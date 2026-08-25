@@ -74,6 +74,7 @@ export {
 
 export {
     createBottomTabBar,
+    createTabsLayout,
     type BottomTabItem,
     type BottomTabBarOptions,
 } from "./tabs";

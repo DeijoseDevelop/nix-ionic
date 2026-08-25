@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2]
+
+### Fixed
+
+- **Tab bar layout**: `ion-tab-bar` without `ion-tabs` wrapper had no CSS
+  positioning — it appeared at the top of the flex flow, behind
+  `ion-router-outlet` (which is `position:absolute; inset:0`). Added
+  `createTabsLayout(outlet, tabBar)` which wraps both in `<ion-tabs>`,
+  providing the correct CSS layout context (flex column, `tabs-inner`
+  with `flex:1`, `<slot name="bottom">` for the tab bar).
+- **Tab bar icons**: `createBottomTabBar` uses dynamic `name=${() => tab.icon}`
+  expressions which the Vite plugin cannot detect. Added `icons` option to
+  `BottomTabBarOptions` — pass icon SVG data and `createBottomTabBar` calls
+  `addIcons()` internally.
+
+### Added
+
+- **`createTabsLayout(outlet, tabBar)`**: wraps an `IonRouterOutlet` and tab
+  bar in `<ion-tabs>`, providing the correct CSS layout context. This is the
+  recommended way to use tabs with `IonRouterOutlet`.
+- **`BottomTabBarOptions.icons`**: `IconDefinitionMap` for registering tab
+  bar icons that can't be auto-detected by the Vite plugin.
+
+---
+
 ## [2.0.1]
 
 ### Fixed
