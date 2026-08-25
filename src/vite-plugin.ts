@@ -226,6 +226,13 @@ export function nixIonic(options: NixIonicPluginOptions = {}): Plugin {
     const dynamicTagFiles: string[] = [];
     const dynamicIconFiles: string[] = [];
 
+    // Track whether the virtual module has already been served and what
+    // tags/icons it contained. If new tags are discovered after it was
+    // served (e.g. lazy-loaded pages), we warn the user to add them to
+    // allowTags so they're included in the initial registration.
+    let virtualModuleServed = false;
+    let lastServedTags = new Set<string>();
+
     return {
         name: "nix-ionic",
         enforce: "pre",
@@ -242,6 +249,11 @@ export function nixIonic(options: NixIonicPluginOptions = {}): Plugin {
                 // Merge allowlists into detected sets
                 for (const tag of allowTagSet) allTags.add(tag);
                 for (const icon of allowIconSet) allIcons.add(icon);
+
+                // Snapshot what we're serving
+                lastServedTags = new Set(allTags);
+                virtualModuleServed = true;
+
                 return generateRegistrationModule(allTags, allIcons, options);
             }
         },
@@ -260,6 +272,36 @@ export function nixIonic(options: NixIonicPluginOptions = {}): Plugin {
             // Accumulate detected tags and icons
             for (const tag of result.tags) allTags.add(tag);
             for (const icon of result.icons) allIcons.add(icon);
+
+            // Warn about tags detected in templates but not in allowTags.
+            // These are auto-detected and will be registered IF the virtual
+            // module is loaded after this file is scanned. But with lazy
+            // loading, the virtual module may already have been served.
+            if (diagnostics) {
+                const unlistedTags = [...result.tags].filter((t) => !allowTagSet.has(t));
+                if (unlistedTags.length > 0) {
+                    const shortId = id.replace(process.cwd() + "/", "");
+                    this.warn(
+                        `[nix-ionic] Tags used in ${shortId} but not in allowTags: ` +
+                        `${unlistedTags.join(", ")}. ` +
+                        "Add them to `nixIonic({ allowTags: [...] })` to ensure " +
+                        "they are registered before first use.",
+                    );
+                }
+            }
+
+            // If the virtual module was already served and we found tags
+            // that weren't in it, warn that a reload is needed.
+            if (virtualModuleServed && diagnostics) {
+                const newTags = [...result.tags].filter((t) => !lastServedTags.has(t));
+                if (newTags.length > 0) {
+                    this.warn(
+                        `[nix-ionic] New tags discovered after registration: ` +
+                        `${newTags.join(", ")}. These were NOT included in the ` +
+                        "registration module. Add them to allowTags and reload.",
+                    );
+                }
+            }
 
             // Track dynamic usage for diagnostics
             if (result.dynamicTags.length > 0) dynamicTagFiles.push(id);

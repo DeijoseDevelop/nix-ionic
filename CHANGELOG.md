@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.6]
+
+### Added
+
+- **Vite plugin warnings for unlisted tags** — when the plugin detects
+  `<ion-*>` tags in templates that are not in `allowTags`, it now emits a
+  warning listing the tags and the file. This helps catch missing
+  registrations caused by lazy-loaded pages (the virtual module is served
+  before all page files are scanned).
+- **"New tags discovered after registration" warning** — if tags are found
+  after the registration module was already served, the plugin warns that
+  they were NOT included and the user should add them to `allowTags`.
+
+---
+
 ## [2.0.5]
 
 ### Added
