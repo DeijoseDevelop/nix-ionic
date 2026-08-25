@@ -156,99 +156,6 @@ interface ActiveOverlay {
 
 // --- Internal factory ---
 
-/**
- * Create an overlay handle for Ionic 8 inline overlay components (e.g. ion-picker)
- * that use the `isOpen` property pattern instead of controller-based present/dismiss.
- *
- * The element is created, appended to the body, and `isOpen` is set to true.
- * Dismissal sets `isOpen` to false and removes the element after the did-dismiss event.
- */
-function createInlineOverlayHandle<TDetail>(
-    tagName: string,
-): OverlayHandle<TDetail> {
-    const presented = signal(false);
-    const result = signal<TDetail | null>(null);
-    let active: HTMLElement | null = null;
-    let disposed = false;
-
-    async function present(options: Record<string, unknown>): Promise<void> {
-        if (disposed) return;
-
-        // If an overlay is already active, dismiss it first (latest-wins).
-        if (active) {
-            try {
-                (active as any).isOpen = false;
-                active.remove();
-            } catch { /* ignore */ }
-            active = null;
-        }
-
-        const el = document.createElement(tagName) as any;
-        // Set all options as properties
-        for (const [key, value] of Object.entries(options)) {
-            el[key] = value;
-        }
-        document.body.appendChild(el);
-        active = el;
-        presented.value = true;
-
-        // Listen for dismiss event
-        el.addEventListener("ionPickerDidDismiss", (detail: any) => {
-            if (active === el && !disposed) {
-                result.value = detail as TDetail;
-                presented.value = false;
-                el.isOpen = false;
-                // Remove after a tick to let Ionic clean up
-                setTimeout(() => {
-                    if (el.parentNode) el.parentNode.removeChild(el);
-                }, 100);
-                if (active === el) active = null;
-            }
-        });
-
-        // Trigger presentation
-        el.isOpen = true;
-    }
-
-    async function dismiss(data?: unknown, role?: string): Promise<boolean> {
-        if (!active || disposed) return false;
-        try {
-            const el = active as any;
-            el.isOpen = false;
-            // Dispatch the dismiss event manually since inline overlays
-            // don't have a dismiss() method in Ionic 8
-            el.dispatchEvent(new CustomEvent("ionPickerDidDismiss", {
-                detail: { data, role },
-                bubbles: true,
-                composed: true,
-            }));
-            presented.value = false;
-            setTimeout(() => {
-                if (el.parentNode) el.parentNode.removeChild(el);
-            }, 100);
-            active = null;
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    function dispose(): void {
-        if (disposed) return;
-        disposed = true;
-        if (active) {
-            try {
-                (active as any).isOpen = false;
-                active.remove();
-            } catch { /* ignore */ }
-            active = null;
-        }
-        presented.value = false;
-    }
-
-    return { presented, result, present, dismiss, dispose };
-}
-
 function createOverlayHandle<TDetail>(
     controller: {
         create: (opts: Record<string, unknown>) => Promise<any>;
@@ -729,5 +636,30 @@ export interface PickerOptions {
  * ```
  */
 export function createPicker(): OverlayHandle {
-    return createInlineOverlayHandle("ion-picker");
+    // Ionic 8's ion-picker is a wheel-style component without columns/buttons/isOpen.
+    // The legacy picker (with columns, buttons, isOpen) is accessed via pickerController,
+    // which creates <ion-picker-legacy> internally. These legacy components must be
+    // registered as custom elements, otherwise customElements.whenDefined() hangs
+    // forever and the picker never appears.
+    //
+    // We register them lazily here (not in setup.ts) to preserve tree-shaking —
+    // apps that don't use the picker won't bundle the legacy picker code.
+    if (typeof customElements !== "undefined") {
+        if (!customElements.get("ion-picker-legacy")) {
+            import("@ionic/core/components/ion-picker-legacy.js")
+                .then((m) => m.defineCustomElement())
+                .catch(() => { });
+        }
+        if (!customElements.get("ion-picker-legacy-column")) {
+            import("@ionic/core/components/ion-picker-legacy-column.js")
+                .then((m) => m.defineCustomElement())
+                .catch(() => { });
+        }
+        if (!customElements.get("ion-backdrop")) {
+            import("@ionic/core/components/ion-backdrop.js")
+                .then((m) => m.defineCustomElement())
+                .catch(() => { });
+        }
+    }
+    return createOverlayHandle(pickerController as any);
 }

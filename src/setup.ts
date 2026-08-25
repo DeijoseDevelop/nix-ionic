@@ -35,6 +35,7 @@ import { initialize } from "@ionic/core/components";
 import { defineCustomElement as defineIonApp } from "@ionic/core/components/ion-app.js";
 import { defineCustomElement as defineIonRouterOutlet } from "@ionic/core/components/ion-router-outlet.js";
 import { defineCustomElement as defineIonBackButton } from "@ionic/core/components/ion-back-button.js";
+import { defineCustomElement as defineIonButtons } from "@ionic/core/components/ion-buttons.js";
 
 // Icons
 import { defineCustomElement as defineIonIcon } from "ionicons/components/ion-icon.js";
@@ -76,6 +77,7 @@ const _coreDefiners: ComponentDefiner[] = [
     defineIonApp,
     defineIonRouterOutlet,
     defineIonBackButton,
+    defineIonButtons,
     defineIonIcon,
 ];
 

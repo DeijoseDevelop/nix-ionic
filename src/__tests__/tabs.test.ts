@@ -45,8 +45,8 @@ describe("createBottomTabBar", () => {
         router.navigate("/profile", { direction: "none" });
         await waitFor(() => {
             const buttons = Array.from(document.querySelectorAll("ion-tab-button"));
-            expect(buttons[1].classList.contains("tab-selected")).toBe(true);
-            expect(buttons[0].classList.contains("tab-selected")).toBe(false);
+            expect((buttons[1] as any).selected).toBe(true);
+            expect((buttons[0] as any).selected).toBe(false);
         });
     });
 
@@ -138,7 +138,7 @@ describe("createBottomTabBar", () => {
         render(createBottomTabBar(tabs));
         router.navigate("/home/nested", { direction: "none" });
         const button = document.querySelector("ion-tab-button") as HTMLElement;
-        expect(button.classList.contains("tab-selected")).toBe(false);
+        expect((button as any).selected).toBe(false);
     });
 
     it("supports tab id", () => {
@@ -157,9 +157,9 @@ describe("createBottomTabBar", () => {
         render(createBottomTabBar(tabs));
         const button = document.querySelector("ion-tab-button") as HTMLElement;
         expect(button.getAttribute("tab")).toBe("root");
-        expect(button.classList.contains("tab-selected")).toBe(true);
+        await waitFor(() => expect((button as any).selected).toBe(true));
         router.navigate("/home", { direction: "none" });
-        await waitFor(() => expect(button.classList.contains("tab-selected")).toBe(false));
+        await waitFor(() => expect((button as any).selected).toBe(false));
     });
 
     it("supports tab path with trailing slash", async () => {
@@ -170,12 +170,12 @@ describe("createBottomTabBar", () => {
         render(createBottomTabBar(tabs));
         router.navigate("/home", { direction: "none" });
         const button = document.querySelector("ion-tab-button") as HTMLElement;
-        await waitFor(() => expect(button.classList.contains("tab-selected")).toBe(true));
+        await waitFor(() => expect((button as any).selected).toBe(true));
     });
 
     it("supports custom slot and class names", () => {
         const tabs = [{ path: "/home", label: "Home" }];
-        render(createBottomTabBar(tabs, { slot: "top", className: "custom-bar", activeClassName: "active-tab" }));
+        render(createBottomTabBar(tabs, { slot: "top", className: "custom-bar" }));
         const bar = document.querySelector("ion-tab-bar") as HTMLElement;
         expect(bar.getAttribute("slot")).toBe("top");
         expect(bar.classList.contains("custom-bar")).toBe(true);

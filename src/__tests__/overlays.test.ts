@@ -211,7 +211,7 @@ describe("overlay controllers (create* pattern)", () => {
     });
 
     describe("createPicker", () => {
-        it("creates and presents a picker via inline overlay (Ionic 8)", async () => {
+        it("creates and presents a picker via pickerController", async () => {
             const picker = createPicker();
             await picker.present({
                 columns: [{
@@ -223,15 +223,10 @@ describe("overlay controllers (create* pattern)", () => {
                 }],
                 buttons: [{ text: "Done", role: "confirm" }],
             });
-            // Ionic 8 picker uses the inline isOpen pattern, not pickerController.create
             expect(picker.presented.value).toBe(true);
-            // The picker element should be in the DOM
-            const el = document.querySelector("ion-picker");
-            expect(el).toBeTruthy();
-            expect((el as any).isOpen).toBe(true);
         });
 
-        it("dismisses the picker and removes it from DOM", async () => {
+        it("dismisses the picker", async () => {
             const picker = createPicker();
             await picker.present({
                 columns: [{ name: "c", options: [{ text: "A", value: "a" }] }],

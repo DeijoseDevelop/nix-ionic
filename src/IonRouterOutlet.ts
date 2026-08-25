@@ -411,14 +411,18 @@ export function IonBackButton(defaultHref: string = "/"): NixTemplate {
             return { unmount: cleanup };
         },
         _render(parent: Node, before: Node | null): () => void {
+            // Wrap in <ion-buttons slot="start"> for correct layout.
+            // Without ion-buttons, ion-back-button has no flex constraints
+            // and can expand to fill the toolbar.
+            const buttons = document.createElement("ion-buttons");
+            buttons.setAttribute("slot", "start");
+
             const btn = document.createElement("ion-back-button");
             btn.setAttribute("default-href", defaultHref);
             const onClick = (ev: Event) => {
                 ev.preventDefault();
                 ev.stopPropagation();
                 const router = nixRouter();
-                // Use NavigationManager's canGoBack when available (per-tab),
-                // otherwise fall back to the router's global canGoBack.
                 const nav = _activeNavigationManager;
                 const canGoBack = nav ? nav.canGoBack.value : router.canGoBack.value;
                 if (canGoBack) {
@@ -428,10 +432,11 @@ export function IonBackButton(defaultHref: string = "/"): NixTemplate {
                 }
             };
             btn.addEventListener("click", onClick);
-            parent.insertBefore(btn, before);
+            buttons.appendChild(btn);
+            parent.insertBefore(buttons, before);
             return () => {
                 btn.removeEventListener("click", onClick);
-                btn.remove();
+                buttons.remove();
             };
         },
     };

@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.5]
+
+### Added
+
+- **`cssVars` option in `BottomTabBarOptions`** — set CSS custom properties
+  on `ion-tab-bar` for theming (`--background`, `--color-selected`, etc.).
+- **`layout` option in `BottomTabBarOptions`** — configurable tab button
+  layout: `icon-top` (default), `icon-start`, `icon-end`, `icon-bottom`,
+  `icon-hide`, `label-hide`.
+- **`badge` + `badgeColor` in `BottomTabItem`** — renders `<ion-badge>` inside
+  tab buttons for notification counts.
+- **`TabButtonLayout` type exported** for consumer type-safety.
+- **`ion-buttons` registered as core component** in `initializeNixIonic()`.
+
+### Fixed
+
+- **Tab button `selected` property now set via JS (not attribute)** — Stencil
+  boolean `@Prop` cannot be set via HTML attributes with Nix.js (`selected=""`
+  is falsy in Stencil's coercion). `createBottomTabBar` now uses a `ref` +
+  `effect` + `nextTick` to set `(btn as any).selected = isActive` directly on
+  each `ion-tab-button` after DOM mount and on every route change. This
+  triggers Stencil re-renders, applying internal classes (`tab-has-icon`,
+  `tab-selected`, `tab-layout-icon-top`) correctly — fixing the icon resize
+  and label layout shift.
+- **Tab button class no longer overwritten** — removed `class=${...}` binding
+  on `ion-tab-button` that was clobbering Stencil's internal host classes
+  (`md`, `tab-has-icon`, `tab-layout-icon-top`, `hydrated`, etc.). Stencil
+  manages these classes; external class binding destroyed them on route
+  change, causing icon resize and label shift.
+- **Initial load sync** — on first render, `tabBarRef.el` is null (template
+  hasn't mounted). Added `nextTick` retry so `selected` is set after the DOM
+  is ready.
+- **`IonBackButton` now wrapped in `<ion-buttons slot="start">`** — without
+  this wrapper, `ion-back-button` had no flex constraints and could expand
+  to fill the toolbar width.
+- **`createPicker` now uses `pickerController`** — Ionic 8's `ion-picker` is
+  a wheel-style component without `columns`/`buttons`/`isOpen`. The legacy
+  picker (with columns/buttons API) is accessed via `pickerController`, which
+  creates `<ion-picker-legacy>` internally. `createPicker` now lazily
+  registers `ion-picker-legacy`, `ion-picker-legacy-column`, and
+  `ion-backdrop` via dynamic import (preserving tree-shaking).
+- **Removed unused `createInlineOverlayHandle`** — dead code after picker
+  migration to controller pattern.
+
+### E2E verified
+
+- 7 Playwright tests pass: tab bar positioning, `selected` property, icon
+  size stability (0px diff on tab switch), internal Stencil classes,
+  click switching.
+
+---
+
 ## [2.0.4]
 
 ### Fixed
