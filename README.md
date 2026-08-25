@@ -534,7 +534,7 @@ the router may not have been scanned yet.
 lazy-loaded pages.** The plugin emits warnings when it detects tags or icons
 that are not in the allowlists, so you know exactly what to add:
 
-```
+```text
 [nix-ionic] Tags used in src/pages/HomePage.ts but not in allowTags:
 ion-header, ion-toolbar, ion-title, ion-content, ion-button, ...
 Add them to `nixIonic({ allowTags: [...] })` to ensure they are
@@ -549,7 +549,7 @@ registered before first use.
 If new tags/icons are discovered after the registration module was already
 served, an additional warning is emitted:
 
-```
+```text
 [nix-ionic] New tags discovered after registration: ion-header, ...
 These were NOT included in the registration module. Add them to
 allowTags and reload.
