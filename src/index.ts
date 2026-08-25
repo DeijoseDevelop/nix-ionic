@@ -45,14 +45,22 @@ export {
     useIonViewDidEnter,
     useIonViewWillLeave,
     useIonViewDidLeave,
+    _connectIonicLifecycle,
     type PageLifecycle,
 } from "./lifecycle";
 
 export {
     setupNixIonic,
+    initializeNixIonic,
+    registerIonicComponents,
+    registerIonicons,
+    addIcons,
+    setAssetPath,
     type ComponentDefiner,
     type IconDefinitionMap,
     type SetupNixIonicOptions,
+    type InitializeOptions,
+    type SetupHandle,
 } from "./setup";
 
 export {
@@ -69,6 +77,54 @@ export {
     type BottomTabItem,
     type BottomTabBarOptions,
 } from "./tabs";
+
+export {
+    createToast,
+    createAlert,
+    createLoading,
+    createActionSheet,
+    createPopover,
+    createModal,
+    createPicker,
+    createModalController,
+    createPopoverController,
+    createNixDelegate,
+    showToast,
+    withLoading,
+    confirm,
+    toastController,
+    alertController,
+    loadingController,
+    actionSheetController,
+    popoverController,
+    modalController,
+    pickerController,
+    type OverlayHandle,
+    type NixOverlayDelegate,
+    type ModalOptions,
+    type PopoverOptions,
+    type PickerOptions,
+    type PickerColumnOption,
+} from "./overlays";
+
+export {
+    createPageState,
+    clearAllPageState,
+    isSerializable,
+    type PageState,
+    type PageStateOptions,
+    type StorageBackend,
+    type SignalMap,
+} from "./page-state";
+
+export {
+    NavigationManager,
+    StackManager,
+    type NavigationManagerOptions,
+    type BeforeNavHook,
+    type AfterNavHook,
+    type TabChangeHook,
+} from "./navigation";
 
 // Re-export the core router so consumers don't need a second import for the
 // most common router calls.

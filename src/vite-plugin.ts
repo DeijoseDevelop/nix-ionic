@@ -1,0 +1,304 @@
+/**
+ * @deijose/nix-ionic / vite-plugin.ts
+ *
+ * Vite plugin `nixIonic()` that scans `html\`\`` template literals for
+ * `<ion-*>` tags and static `name="icon-name"` attributes, then generates
+ * a virtual module that imports and registers only the used components
+ * and icons.
+ *
+ * Usage:
+ * ```ts
+ * // vite.config.ts
+ * import { defineConfig } from "vite";
+ * import { nix } from "@deijose/vite-plugin-nix";
+ * import { nixIonic } from "@deijose/nix-ionic/vite-plugin";
+ *
+ * export default defineConfig({
+ *   plugins: [nix(), nixIonic()],
+ * });
+ * ```
+ *
+ * The plugin generates a virtual module at `virtual:nix-ionic/registration`
+ * that imports only the detected components and icons, and calls
+ * `initializeNixIonic()` + `registerIonicComponents()` + `registerIonicons()`.
+ *
+ * For dynamic tags or icons (e.g. `<ion-${type}>` or `name=${iconName}`),
+ * the plugin emits a diagnostic warning. Users can suppress warnings and
+ * declare allowlists via the `allow` option.
+ */
+
+import type { Plugin } from "vite";
+import { parse } from "@babel/parser";
+import _traverse from "@babel/traverse";
+import * as t from "@babel/types";
+import {
+    isSupportedTag,
+    tagToSubpath,
+    tagToDefinerName,
+} from "./components/manifest.js";
+
+const traverse = ((_traverse as unknown as { default?: typeof _traverse }).default ?? _traverse) as typeof _traverse;
+
+const VIRTUAL_MODULE_ID = "virtual:nix-ionic/registration";
+const RESOLVED_VIRTUAL_ID = "\0virtual:nix-ionic/registration";
+
+export interface NixIonicPluginOptions {
+    /**
+     * Auto-register detected components. Set to `false` to only scan and
+     * emit diagnostics without generating registration code.
+     * @default true
+     */
+    autoRegister?: boolean;
+
+    /**
+     * Tags to allow even if not detected statically (e.g. dynamically
+     * rendered components). Suppresses diagnostics for these tags.
+     */
+    allowTags?: string[];
+
+    /**
+     * Icon names to allow even if not detected statically.
+     */
+    allowIcons?: string[];
+
+    /**
+     * Icon import mode: "inline" (default) or "assets".
+     */
+    icons?: "inline" | "assets";
+
+    /**
+     * Custom icon asset path (only used when icons === "assets").
+     */
+    iconAssetPath?: string;
+
+    /**
+     * Emit warnings for undetected/dynamic tags. Set to `false` to silence.
+     * @default true
+     */
+    diagnostics?: boolean;
+}
+
+interface ScanResult {
+    tags: Set<string>;
+    icons: Set<string>;
+    dynamicTags: string[];
+    dynamicIcons: string[];
+}
+
+function scanCode(code: string, id: string): ScanResult {
+    const result: ScanResult = {
+        tags: new Set(),
+        icons: new Set(),
+        dynamicTags: [],
+        dynamicIcons: [],
+    };
+
+    let ast: t.File;
+    try {
+        ast = parse(code, {
+            sourceType: "module",
+            plugins: ["typescript", "jsx", "importMeta", "topLevelAwait"],
+        });
+    } catch {
+        return result; // not parseable, skip
+    }
+
+    traverse(ast, {
+        // Match html`...` tagged template literals
+        TaggedTemplateExpression(path: any) {
+            const { tag, quasi } = path.node;
+            if (!t.isIdentifier(tag) || tag.name !== "html") return;
+
+            // Extract raw text from template quasis
+            const rawText = quasi.quasis.map((q: any) => q.value.raw).join("__nix_hole__");
+
+            // Scan for <ion-*> tags
+            const tagRegex = /<ion-([a-z][a-z0-9-]*)/g;
+            let match: RegExpExecArray | null;
+            while ((match = tagRegex.exec(rawText)) !== null) {
+                const fullTag = `ion-${match[1]}`;
+                if (isSupportedTag(fullTag)) {
+                    result.tags.add(fullTag);
+                }
+            }
+
+            // Scan for name="icon-name" or name='icon-name' inside <ion-icon>
+            // Only static string attributes are detected.
+            const iconTagRegex = /<ion-icon[^>]*\sname=["']([a-z][a-z0-9-]+)["']/g;
+            while ((match = iconTagRegex.exec(rawText)) !== null) {
+                result.icons.add(match[1]);
+            }
+
+            // Detect dynamic tag patterns: <ion-${var}> or name=${var}
+            // The __nix_hole__ placeholder marks where ${} expressions were.
+            const dynamicTagRegex = /<ion-__nix_hole__/g;
+            if (dynamicTagRegex.test(rawText)) {
+                result.dynamicTags.push(id);
+            }
+
+            // Dynamic icon name: name=__nix_hole__ (no quotes around the hole)
+            const dynamicIconRegex = /<ion-icon[^>]*\sname=__nix_hole__/g;
+            if (dynamicIconRegex.test(rawText)) {
+                result.dynamicIcons.push(id);
+            }
+        },
+    });
+
+    return result;
+}
+
+export function generateRegistrationModule(
+    tags: Set<string>,
+    icons: Set<string>,
+    options: NixIonicPluginOptions,
+): string {
+    const lines: string[] = [
+        "// Auto-generated by @deijose/nix-ionic/vite-plugin — do not edit.",
+        "import { initializeNixIonic, registerIonicComponents, registerIonicons } from \"@deijose/nix-ionic\";",
+        "",
+    ];
+
+    // Import component definers
+    const tagArray = [...tags].sort();
+    const definerNames: string[] = [];
+    for (const tag of tagArray) {
+        const subpath = tagToSubpath(tag);
+        const definerName = tagToDefinerName(tag);
+        lines.push(`import { ${definerName} } from "@deijose/nix-ionic/components/${subpath}";`);
+        definerNames.push(definerName);
+    }
+
+    // Import icons from ionicons/icons
+    const iconArray = [...icons].sort();
+    if (iconArray.length > 0) {
+        const iconImports = iconArray.map((name) => {
+            // Convert kebab-case to camelCase for ionicons/icons export
+            const camelName = name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            return `${camelName} as "${name}"`;
+        });
+        lines.push(`import { ${iconImports.join(", ")} } from "ionicons/icons";`);
+    }
+
+    lines.push("");
+
+    // Initialize
+    const initOpts: string[] = [];
+    if (options.icons) initOpts.push(`icons: "${options.icons}"`);
+    if (options.iconAssetPath) initOpts.push(`icons: { mode: "assets", path: "${options.iconAssetPath}" }`);
+    lines.push(`initializeNixIonic({ ${initOpts.join(", ")} });`);
+
+    // Register components
+    if (definerNames.length > 0) {
+        lines.push(`registerIonicComponents(${definerNames.join(", ")});`);
+    }
+
+    // Register icons
+    if (iconArray.length > 0) {
+        const iconObj = iconArray.map((name) => {
+            const camelName = name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            return `"${name}": ${camelName}`;
+        });
+        lines.push(`registerIonicons({ ${iconObj.join(", ")} });`);
+    }
+
+    lines.push("");
+
+    return lines.join("\n");
+}
+
+export function nixIonic(options: NixIonicPluginOptions = {}): Plugin {
+    const {
+        autoRegister = true,
+        allowTags = [],
+        allowIcons = [],
+        diagnostics = true,
+    } = options;
+
+    const allowTagSet = new Set(allowTags);
+    const allowIconSet = new Set(allowIcons);
+
+    // Accumulated scan results across all modules
+    const allTags = new Set<string>();
+    const allIcons = new Set<string>();
+    const dynamicTagFiles: string[] = [];
+    const dynamicIconFiles: string[] = [];
+
+    return {
+        name: "nix-ionic",
+        enforce: "pre",
+
+        resolveId(id) {
+            if (id === VIRTUAL_MODULE_ID) return RESOLVED_VIRTUAL_ID;
+        },
+
+        load(id) {
+            if (id === RESOLVED_VIRTUAL_ID) {
+                if (!autoRegister) {
+                    return "export {}; // autoRegister disabled";
+                }
+                // Merge allowlists into detected sets
+                for (const tag of allowTagSet) allTags.add(tag);
+                for (const icon of allowIconSet) allIcons.add(icon);
+                return generateRegistrationModule(allTags, allIcons, options);
+            }
+        },
+
+        transform(code, id) {
+            // Only process TS/JS/TSX/JSX files, skip node_modules and virtual
+            if (!/\.(ts|tsx|js|jsx)$/.test(id)) return null;
+            if (id.includes("node_modules")) return null;
+            if (id.includes("\0")) return null;
+
+            const result = scanCode(code, id);
+            if (result.tags.size === 0 && result.icons.size === 0 && result.dynamicTags.length === 0 && result.dynamicIcons.length === 0) {
+                return null;
+            }
+
+            // Accumulate detected tags and icons
+            for (const tag of result.tags) allTags.add(tag);
+            for (const icon of result.icons) allIcons.add(icon);
+
+            // Track dynamic usage for diagnostics
+            if (result.dynamicTags.length > 0) dynamicTagFiles.push(id);
+            if (result.dynamicIcons.length > 0) dynamicIconFiles.push(id);
+
+            // Emit diagnostics for dynamic tags/icons
+            if (diagnostics) {
+                if (dynamicTagFiles.length > 0 && dynamicTagFiles.length <= 3) {
+                    for (const file of result.dynamicTags) {
+                        this.warn(
+                            `[nix-ionic] Dynamic <ion-*> tag detected in ${file}. ` +
+                            "Add the tag to `nixIonic({ allowTags: [...] })` to suppress this warning.",
+                        );
+                    }
+                }
+                if (dynamicIconFiles.length > 0 && dynamicIconFiles.length <= 3) {
+                    for (const file of result.dynamicIcons) {
+                        this.warn(
+                            `[nix-ionic] Dynamic icon name detected in ${file}. ` +
+                            "Add the icon to `nixIonic({ allowIcons: [...] })` to suppress this warning.",
+                        );
+                    }
+                }
+            }
+
+            return null; // don't transform code, just scan
+        },
+
+        buildStart() {
+            // Emit final diagnostics
+            if (diagnostics && dynamicTagFiles.length > 3) {
+                this.warn(
+                    `[nix-ionic] Dynamic <ion-*> tags detected in ${dynamicTagFiles.length} files. ` +
+                    "Add tags to `nixIonic({ allowTags: [...] })` to suppress.",
+                );
+            }
+            if (diagnostics && dynamicIconFiles.length > 3) {
+                this.warn(
+                    `[nix-ionic] Dynamic icon names detected in ${dynamicIconFiles.length} files. ` +
+                    "Add icons to `nixIonic({ allowIcons: [...] })` to suppress.",
+                );
+            }
+        },
+    };
+}

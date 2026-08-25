@@ -3,1147 +3,555 @@
 [![npm version](https://img.shields.io/npm/v/@deijose/nix-ionic.svg)](https://www.npmjs.com/package/@deijose/nix-ionic)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-> Ionic bridge for [Nix.js](https://nix-js.dev/) — routing, lifecycle hooks, and navigation powered by the official `ion-router` API.
+> Ionic mobile integration for [Nix.js](https://nix-js.dev/) — tree-shakeable components, reactive overlays, cache policies, page-state persistence, optional Capacitor, and a Vite plugin for auto-registration.
 
----
+## Why?
 
-## How it works
+`@deijose/nix-ionic` bridges Nix.js signal-based reactivity with Ionic Core 8's native routing, transitions, and overlays. Unlike `@ionic/angular` or `@ionic/react`, it adds **zero framework runtime overhead** — no virtual DOM, no dependency arrays, no hooks rules.
 
-`@deijose/nix-ionic` bridges Nix.js components with Ionic Core's official vanilla JS routing system:
-
-1. Each route is registered as a **Custom Element** (`nix-page-home`, `nix-page-detail`, etc.)
-2. `ion-router` activates the correct custom element based on the URL
-3. `ion-router-outlet` manages: **view cache, page transitions, back button, iOS swipe back** — all native, zero custom code
-4. `connectedCallback` mounts the Nix component inside the custom element
-5. `ionRouteWillChange` / `ionRouteDidChange` drive the Nix lifecycle hooks
-
-This gives you the same integration depth as `@ionic/angular` and `@ionic/react`, using only the public `ion-router` API.
-
----
-
-## Installation
+## Install
 
 ```bash
-npm install @deijose/nix-ionic @deijose/nix-js @ionic/core
+npm install @deijose/nix-ionic @deijose/nix-js @ionic/core ionicons
 ```
 
-Requires `@deijose/nix-js` 2.1+ (2.x).
+For native mobile (optional):
 
----
-
-## Modular component loading (v1.0.0+)
-
-Starting with v1.0.0, `setupNixIonic()` only registers **6 minimal core components** needed for routing (`ion-app`, `ion-router`, `ion-route`, `ion-router-outlet`, `ion-back-button`, `ion-icon`). All other components are loaded **on demand**.
-
-This means you **only pay for what you use**, reducing your initial bundle size dramatically.
-
-### Three ways to load components
-
-#### 1. Individual components (maximum tree-shaking) ✅
-
-Import only the exact components you need:
-
-```typescript
-import { setupNixIonic } from "@deijose/nix-ionic";
-import {
-  defineIonHeader,
-  defineIonToolbar,
-  defineIonTitle,
-  defineIonContent,
-  defineIonButton,
-} from "@deijose/nix-ionic/components";
-
-setupNixIonic({
-  components: [
-    defineIonHeader,
-    defineIonToolbar,
-    defineIonTitle,
-    defineIonContent,
-    defineIonButton,
-  ],
-});
+```bash
+npm install @capacitor/core @capacitor/app @capacitor/status-bar @capacitor/splash-screen @capacitor/keyboard @capacitor/haptics
 ```
 
-#### 2. Category bundles (balanced approach)
+## Quick start
 
-Load components by category:
+```ts
+// main.ts
+import "@ionic/core/css/core.css";
+import "@ionic/core/css/normalize.css";
+import "@ionic/core/css/structure.css";
+import "@ionic/core/css/typography.css";
+import "@ionic/core/css/padding.css";
+import "@ionic/core/css/flex-utils.css";
+import "@ionic/core/css/display.css";
 
-```typescript
-import { setupNixIonic } from "@deijose/nix-ionic";
-import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
-import { buttonComponents } from "@deijose/nix-ionic/bundles/buttons";
-import { listComponents } from "@deijose/nix-ionic/bundles/lists";
+import { NixComponent, html, mount } from "@deijose/nix-js";
+import { IonRouterOutlet, IonPage, IonBackButton } from "@deijose/nix-ionic";
+import { initializeNixIonic, registerIonicComponents } from "@deijose/nix-ionic";
+import { defineIonHeader, defineIonToolbar, defineIonTitle, defineIonContent, defineIonButton } from "@deijose/nix-ionic/components";
+import { home, homeOutline } from "ionicons/icons";
 
-setupNixIonic({
-  components: [...layoutComponents, ...buttonComponents, ...listComponents],
-});
+// 1. Initialize + register only what you use
+initializeNixIonic();
+registerIonicComponents(defineIonHeader, defineIonToolbar, defineIonTitle, defineIonContent, defineIonButton);
+
+// 2. Define routes
+const outlet = new IonRouterOutlet([
+  { path: "/", component: () => html`<ion-content><h1>Home</h1></ion-content>` },
+  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) },
+]);
+
+// 3. Mount
+class App extends NixComponent {
+  override render() {
+    return html`<ion-app>${outlet}</ion-app>`;
+  }
+}
+mount(new App(), "#app");
 ```
 
-**Available bundles:**
+## Subpaths
 
-| Bundle | Import path | Components |
-|---|---|---|
-| Layout | `@deijose/nix-ionic/bundles/layout` | header, toolbar, title, content, footer, buttons |
-| Navigation | `@deijose/nix-ionic/bundles/navigation` | menu, menu-button, tabs, tab, tab-bar, tab-button, label |
-| Forms | `@deijose/nix-ionic/bundles/forms` | input, textarea, checkbox, toggle, select, select-option, radio, radio-group, range, searchbar |
-| Lists | `@deijose/nix-ionic/bundles/lists` | list, list-header, item, item-divider, item-sliding, item-options, item-option, label, note, card, card-header, card-title, card-subtitle, card-content |
-| Feedback | `@deijose/nix-ionic/bundles/feedback` | spinner, progress-bar, skeleton-text, badge, avatar, thumbnail |
-| Buttons | `@deijose/nix-ionic/bundles/buttons` | button, fab, fab-button, fab-list, ripple-effect |
-| Overlays | `@deijose/nix-ionic/bundles/overlays` | modal, popover, toast, alert |
-| **All** | `@deijose/nix-ionic/bundles/all` | All of the above |
+| Import | What it gives you |
+|---|---|
+| `@deijose/nix-ionic` | Core: router outlet, pages, lifecycle, setup, overlays, page-state |
+| `@deijose/nix-ionic/components/*` | Individual component definers (tree-shakeable) |
+| `@deijose/nix-ionic/bundles/*` | Category bundles (layout, forms, lists, etc.) |
+| `@deijose/nix-ionic/overlays` | Reactive overlay controllers |
+| `@deijose/nix-ionic/page-state` | Page-state persistence protocol |
+| `@deijose/nix-ionic/navigation` | NavigationManager (single authority, hooks, tab switching) |
+| `@deijose/nix-ionic/capacitor` | Optional Capacitor integration (zero web bundle cost) |
 
-#### 3. All components (same as v0.2.x)
+## Testing
 
-If you want backward-compatible behavior with all components loaded at once:
+- **Unit tests**: `npm test` — 234 tests with happy-dom mocks
+- **E2E tests**: `npm run e2e` — 12 Playwright tests with real `@ionic/core`
+  - Navigation, lifecycle, overlays, back button, contract tests
+  - Chromium mobile viewport, `prefers-reduced-motion: reduce`
+  - No mocks — real `ion-router-outlet.commit()`, real custom elements
+| `@deijose/nix-ionic/vite-plugin` | Vite plugin for auto component/icon registration |
 
-```typescript
+## Setup
+
+### Incremental (recommended)
+
+```ts
+import { initializeNixIonic, registerIonicComponents, registerIonicons } from "@deijose/nix-ionic";
+import { defineIonButton, defineIonCard } from "@deijose/nix-ionic/components/button";
+import { star, starOutline } from "ionicons/icons";
+
+initializeNixIonic();
+registerIonicComponents(defineIonButton, defineIonCard);
+registerIonicons({ star, "star-outline": starOutline });
+```
+
+### Compatibility facade (1.x migration)
+
+```ts
 import { setupNixIonic } from "@deijose/nix-ionic";
 import { allComponents } from "@deijose/nix-ionic/bundles/all";
 
 setupNixIonic({ components: allComponents });
 ```
 
-### Migration from v0.2.x and earlier
+### Vite plugin (auto-registration)
 
-```diff
-  import { setupNixIonic } from "@deijose/nix-ionic";
-+ import { allComponents } from "@deijose/nix-ionic/bundles/all";
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import { nix } from "@deijose/vite-plugin-nix-js";
+import { nixIonic } from "@deijose/nix-ionic/vite-plugin";
 
-- setupNixIonic();
-+ setupNixIonic({ components: allComponents });
-```
-
-Or better yet, import only what you actually use for a smaller bundle.
-
----
-
-## Quick start
-
-### 1. Initialize and Mount in `main.ts`
-
-```typescript
-// 1. Core Styles (order matters)
-import "@ionic/core/css/core.css";
-import "@ionic/core/css/normalize.css";
-import "@ionic/core/css/structure.css";
-import "@ionic/core/css/typography.css";
-import "@ionic/core/css/padding.css";
-import "@ionic/core/css/flex-utils.css";
-import "@ionic/core/css/display.css";
-import "./style.css";
-
-// 2. Framework Imports
-import { NixComponent, html, mount } from "@deijose/nix-js";
-import { setupNixIonic, IonRouterOutlet } from "@deijose/nix-ionic";
-import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
-import { navigationComponents } from "@deijose/nix-ionic/bundles/navigation";
-import { defineIonButton } from "@deijose/nix-ionic/components";
-import { home, homeOutline } from "ionicons/icons";
-
-// 3. Pages
-import { HomePage }   from "./pages/HomePage";
-import { DetailPage } from "./pages/DetailPage";
-
-// Configure and inject Ionic Core (only the components you use)
-setupNixIonic({
-  components: [...layoutComponents, ...navigationComponents, defineIonButton],
-  icons: {
-    home,
-    "home-outline": homeOutline,
-  },
+export default defineConfig({
+  plugins: [
+    nix(),
+    nixIonic(), // scans html`` for <ion-*> tags + static icons
+  ],
 });
 
-// 4. Router Configuration
-const outlet = new IonRouterOutlet([
-  { path: "/",           component: (ctx) => new HomePage(ctx)   },
-  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) }
-]);
-
-// 5. App Component
-class App extends NixComponent {
-  override render() {
-    return html`<ion-app>${outlet}</ion-app>`;
-  }
-}
-
-// 6. Bootstrap
-mount(new App(), "#app");
+// Then in your app entry:
+import "virtual:nix-ionic/registration";
 ```
 
----
+The plugin scans `html\`\`` templates for `<ion-*>` tags and `name="icon-name"` attributes, then generates a virtual module that imports and registers only what you use.
 
 ## Pages
 
-### Class component — `IonPage`
+### Class component with lifecycle
 
-Use `IonPage` when you need navigation lifecycle hooks.
+```ts
+import { html, signal } from "@deijose/nix-js";
+import { IonPage, IonBackButton, type PageContext } from "@deijose/nix-ionic";
 
-```typescript
-import { html, signal, nixRouter } from "@deijose/nix-js";
-import type { NixTemplate } from "@deijose/nix-js";
-import { IonPage, IonBackButton } from "@deijose/nix-ionic";
-import type { PageContext } from "@deijose/nix-ionic";
-
-export class DetailPage extends IonPage {
-  private post = signal<Post | null>(null);
-  private _id: string;
+class DetailPage extends IonPage {
+  private data = signal<unknown>(null);
+  private id: string;
 
   constructor({ lc, params }: PageContext) {
     super(lc);
-    this._id = params["id"] ?? "1";
+    this.id = params.id;
   }
 
-  // Called on EVERY activation — even when returning from cached stack
-  override ionViewWillEnter(): void {
-    this._loadPost(this._id);
+  override ionViewWillEnter() {
+    // Runs on every activation — even from cache
+    fetch(`/api/items/${this.id}`).then(r => r.json()).then(d => this.data.value = d);
   }
 
-  // Called when leaving the view (still in cache)
-  override ionViewWillLeave(): void {
-    // pause timers, subscriptions, etc.
+  override ionViewWillLeave() {
+    // Pause timers, subscriptions, etc.
   }
 
-  override render(): NixTemplate {
+  override render() {
     return html`
       <ion-header>
         <ion-toolbar>
-          <ion-buttons slot="start">
-            ${IonBackButton()}
-          </ion-buttons>
+          <ion-buttons slot="start">${IonBackButton()}</ion-buttons>
           <ion-title>Detail</ion-title>
         </ion-toolbar>
       </ion-header>
       <ion-content class="ion-padding">
-        <p>${() => this.post.value?.title ?? ""}</p>
+        <p>${() => JSON.stringify(this.data.value)}</p>
       </ion-content>
     `;
   }
 }
 ```
 
-### Function component — composables
+### Function component with composables
 
-```typescript
+```ts
 import { html, signal } from "@deijose/nix-js";
-import { useIonViewWillEnter, useIonViewWillLeave, IonBackButton } from "@deijose/nix-ionic";
-import type { NixTemplate } from "@deijose/nix-js";
-import type { PageContext } from "@deijose/nix-ionic";
+import { useIonViewWillEnter, useIonViewWillLeave, type PageContext } from "@deijose/nix-ionic";
 
-export function ProfilePage({ lc }: PageContext): NixTemplate {
+function ProfilePage({ lc }: PageContext) {
   const visits = signal(0);
+  useIonViewWillEnter(lc, () => visits.value++);
+  useIonViewWillLeave(lc, () => console.log("leaving"));
+  return html`<ion-content><p>Visits: ${() => visits.value}</p></ion-content>`;
+}
+```
 
-  useIonViewWillEnter(lc, () => {
-    visits.update((n) => n + 1);
-  });
+### Lifecycle hooks
 
-  useIonViewWillLeave(lc, () => {
-    console.log("leaving profile");
+| Hook | When | Use for |
+|---|---|---|
+| `ionViewWillEnter` | Before visible (every activation) | Data refresh, restart timers |
+| `ionViewDidEnter` | After fully visible | Analytics, scroll position |
+| `ionViewWillLeave` | Before hidden | Pause timers, save state |
+| `ionViewDidLeave` | After hidden | Cleanup subscriptions |
+
+> **Key**: `onMount`/`onInit` fire once. `ionViewWillEnter` fires on every visit — even from cache.
+
+## Navigation
+
+```ts
+import { nixRouter } from "@deijose/nix-js";
+
+const router = nixRouter();
+router.navigate("/detail/42");
+router.navigate("/search", { query: { q: "hello" } });
+router.replace("/home");
+router.back();
+
+router.current.value;     // "/detail/42"
+router.params.value;      // { id: "42" }
+router.query.value;       // { q: "hello" }
+router.canGoBack.value;   // true/false
+```
+
+### Route guards
+
+```ts
+new IonRouterOutlet([
+  {
+    path: "/admin",
+    component: (ctx) => new AdminPage(ctx),
+    beforeEnter: ({ params }) => {
+      if (!isLoggedIn()) return "/login";  // redirect
+      if (!isAdmin()) return false;         // cancel
+      // void/undefined = allow
+    },
+  },
+]);
+```
+
+## Cache policies
+
+Control how many pages stay cached and for how long.
+
+```ts
+new IonRouterOutlet(routes, {
+  cachePolicy: { max: 10, ttl: 60000, strategy: "lru" },
+});
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `max` | unlimited | Max cached entries per tab. Excess evicted by strategy. |
+| `ttl` | unlimited | Time-to-live in ms. Entries auto-evicted on expiry. |
+| `strategy` | `"lru"` | `"lru"` = evict least-recently-used, `"fifo"` = evict oldest |
+
+### Per-route override
+
+```ts
+new IonRouterOutlet([
+  { path: "/", component: () => html`...` },
+  { path: "/transient", cache: false, component: () => html`...` },        // never cache
+  { path: "/heavy", cache: { max: 1 }, component: () => html`...` },      // max 1 instance
+  { path: "/volatile", cache: { ttl: 5000 }, component: () => html`...` }, // 5s TTL
+]);
+```
+
+## NavigationManager
+
+A single coordination authority for navigation — hooks, tab switching, and cache invalidation by route pattern.
+
+```ts
+import { NavigationManager, IonRouterOutlet } from "@deijose/nix-ionic";
+
+const nav = new NavigationManager({ tabs: ["/home", "/search", "/profile"] });
+
+// Navigation hooks
+nav.beforeNav((path, intent) => {
+  console.log("navigating to", path);
+  // return false to cancel
+});
+
+nav.afterNav((path, direction) => {
+  analytics.track("page_view", { path, direction });
+});
+
+nav.onTabChange((tab, prev) => {
+  console.log("tab changed:", prev, "→", tab);
+});
+
+// Programmatic tab switching
+const target = nav.switchTab("/search");
+if (target) nixRouter().navigate(target);
+
+// Cache invalidation by route pattern
+nav.invalidateRoute("/user/:id", { id: "42" }); // invalidate user 42
+nav.invalidatePattern("/admin/*");              // invalidate all admin pages
+
+// Pass to outlet
+const outlet = new IonRouterOutlet(routes, { navigation: nav });
+```
+
+### Stack inspection
+
+```ts
+nav.stackDepth();        // current tab stack depth
+nav.stackTop();          // current tab stack top path
+nav.stackEntries();      // copy of current tab stack
+nav.activeTab;           // active tab prefix
+```
+
+## Overlays
+
+Reactive overlay controllers using the `create*` pattern (like `createStore`, `createRouter`).
+
+```ts
+import { html } from "@deijose/nix-js";
+import { createToast, createAlert, createModalController, confirm, withLoading } from "@deijose/nix-ionic";
+
+function MyPage() {
+  const toast = createToast();
+  const modal = createModalController();
+
+  const save = async () => {
+    await withLoading({ message: "Saving..." }, async () => {
+      await fetch("/api/save", { method: "POST" });
+    });
+    toast.present({ message: "Saved!", duration: 1500 });
+  };
+
+  const openModal = () => modal.present({
+    component: () => html`<ion-content><h1>Modal content mounted by Nix.js!</h1></ion-content>`,
   });
 
   return html`
-    <ion-header>
-      <ion-toolbar>
-        <ion-buttons slot="start">
-          ${IonBackButton()}
-        </ion-buttons>
-        <ion-title>Profile</ion-title>
-      </ion-toolbar>
-    </ion-header>
-    <ion-content class="ion-padding">
-      <p>Visits: ${() => visits.value}</p>
+    <ion-content>
+      <ion-button @click=${save}>Save</ion-button>
+      <ion-button @click=${openModal}>Open Modal</ion-button>
+      ${() => modal.presented.value ? html`<p>Modal is open</p>` : null}
     </ion-content>
   `;
 }
 ```
 
----
+### Available controllers
 
-## Navigation — `nixRouter()`
+| Controller | Description |
+|---|---|
+| `createToast()` | Reactive toast |
+| `createAlert()` | Reactive alert |
+| `createLoading()` | Reactive loading spinner |
+| `createActionSheet()` | Reactive action sheet |
+| `createPopover()` | Reactive popover |
+| `createModal()` | Basic modal (no delegate) |
+| `createModalController()` | Modal with Nix.js delegate (mounts `html\`\`` inside) |
+| `createPopoverController()` | Popover with Nix.js delegate |
+| `createPicker()` | Column-based picker |
 
-Access the router singleton from anywhere without prop drilling:
+### One-shot helpers
 
-```typescript
-import { nixRouter } from "@deijose/nix-js";
+```ts
+import { showToast, withLoading, confirm } from "@deijose/nix-ionic";
 
-const router = nixRouter();
+showToast({ message: "Done!", duration: 1000 });
 
-// Navigate forward
-router.navigate("/detail/42");
+const data = await withLoading({ message: "Fetching..." },
+  () => fetch("/api/data").then(r => r.json()));
 
-// Navigate back
-router.back();
-
-// Replace current view (no history entry)
-router.replace("/home");
-
-// Reactive signals
-router.canGoBack.value   // boolean — true when back stack exists
-router.params.value      // { id: "42" } for /detail/:id
-router.current.value     // current pathname
+const yes = await confirm({ header: "Delete", message: "Sure?", confirmText: "Delete" });
 ```
 
-### In a class component
+## Page-state persistence
 
-```typescript
-override render(): NixTemplate {
-  const router = nixRouter(); // safe to call inside render()
+Opt-in persistence of serializable state across navigation and app restarts.
 
-  return html`
-    <ion-button @click=${() => router.navigate("/profile")}>
-      Go to Profile
-    </ion-button>
-  `;
+```ts
+import { signal } from "@deijose/nix-js";
+import { createPageState, IonPage } from "@deijose/nix-ionic";
+
+class SearchPage extends IonPage {
+  private query = signal("");
+  private results = signal<string[]>([]);
+  private state = createPageState("search", {
+    query: this.query,
+    results: this.results,
+  }, { storage: "local" }); // persists across app restarts
+
+  override ionViewWillEnter() { this.state.restore(); }
+  override ionViewWillLeave() { this.state.save(); }
 }
 ```
 
-### Reactive state only
+**Rules:**
+- Only serializable data (primitives, plain arrays/objects)
+- DOM nodes, functions, symbols, class instances → rejected with warning
+- `sessionStorage` (default) or `localStorage` (opt-in)
+- `clearAllPageState()` for logout flows
 
-Use `nixRouter()` directly when you only need reactive route state. The router is a signal-based object, so destructuring state is safe:
+## Capacitor (optional native)
 
-```typescript
-import { nixRouter } from "@deijose/nix-js";
+Isolated behind `@deijose/nix-ionic/capacitor` — **zero web bundle cost** (0 bytes of `@capacitor/*` in main bundle).
 
-const router = nixRouter();
-router.current.value;   // current pathname
-router.params.value;    // { id: "42" } for /detail/:id
-router.canGoBack.value; // boolean
+```ts
+import { createCapacitorApp } from "@deijose/nix-ionic/capacitor";
+
+const app = createCapacitorApp({
+  statusBar: { style: "dark", backgroundColor: "#1a1a2e" },
+  splashScreen: { fadeOutDuration: 200 },
+  backButton: { defaultHref: "/home" },
+});
+
+await app.ready(); // configures status bar, hides splash, wires back button
 ```
 
----
+### Individual plugins
 
-## Tabs — `createBottomTabBar()`
+```ts
+import { Haptics, StatusBar, App, Keyboard } from "@deijose/nix-ionic/capacitor";
 
-Build a bottom tab bar without manual route listeners or `setInterval` polling.
+await Haptics.impact("medium");     // no-op on web
+await StatusBar.setStyle({ style: "dark" }); // no-op on web
+App.onBackButton((info) => { /* ... */ });   // no-op on web
+```
 
-```typescript
-import { html } from "@deijose/nix-js";
+All methods are **no-ops on web** — safe to call unconditionally.
+
+## Tabs
+
+```ts
 import { createBottomTabBar } from "@deijose/nix-ionic";
 
-const tabs = createBottomTabBar(
-  [
-    { path: "/", label: "Home", icon: "home-outline", activeIcon: "home", exact: true },
-    { path: "/map", label: "Map", icon: "map-outline", activeIcon: "map" },
-    { path: "/profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
-  ],
-  {
-    hiddenPaths: ["/login", "/auth/*"],
-    navigationDirection: "root",
-  },
-);
+const tabs = createBottomTabBar([
+  { path: "/", label: "Home", icon: "home-outline", activeIcon: "home", exact: true },
+  { path: "/search", label: "Search", icon: "search-outline", activeIcon: "search" },
+  { path: "/profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
+], {
+  hideWhen: (path) => path === "/login",
+});
 
 html`<ion-app>${outlet}${tabs}</ion-app>`;
 ```
 
-### Complete example — tabs + router + guards
+## Vite plugin
 
-This is a full `main.ts`-style setup showing how tabs work together with `IonRouterOutlet` and route guards.
+Auto-registers only the Ionic components and icons you actually use in `html\`\`` templates.
 
-```typescript
-import "@ionic/core/css/core.css";
-import "@ionic/core/css/normalize.css";
-import "@ionic/core/css/structure.css";
-import "@ionic/core/css/typography.css";
-import "@ionic/core/css/padding.css";
-import "@ionic/core/css/flex-utils.css";
-import "@ionic/core/css/display.css";
+```ts
+// vite.config.ts
+import { nixIonic } from "@deijose/nix-ionic/vite-plugin";
 
-import { signal, NixComponent, html, mount } from "@deijose/nix-js";
-import {
-  setupNixIonic,
-  IonRouterOutlet,
-  createBottomTabBar,
-  IonPage,
-  IonBackButton,
-  type PageContext,
-} from "@deijose/nix-ionic";
-import { nixRouter } from "@deijose/nix-js";
-import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
-import { navigationComponents } from "@deijose/nix-ionic/bundles/navigation";
-import { listComponents } from "@deijose/nix-ionic/bundles/lists";
-import { buttonComponents } from "@deijose/nix-ionic/bundles/buttons";
-import { home, homeOutline, map, mapOutline, person, personOutline, logInOutline } from "ionicons/icons";
-
-// Tiny auth store for the demo
-const isAuthenticated = signal(false);
-const auth = {
-  login: () => (isAuthenticated.value = true),
-  logout: () => (isAuthenticated.value = false),
-};
-
-setupNixIonic({
-  components: [...layoutComponents, ...navigationComponents, ...listComponents, ...buttonComponents],
-  icons: {
-    home,
-    "home-outline": homeOutline,
-    map,
-    "map-outline": mapOutline,
-    person,
-    "person-outline": personOutline,
-    "log-in-outline": logInOutline,
-  },
+export default defineConfig({
+  plugins: [nixIonic()],
 });
-
-class LoginPage extends IonPage {
-  constructor(ctx: PageContext) {
-    super(ctx.lc);
-  }
-
-  override render() {
-    const router = nixRouter();
-    return html`
-      <ion-header><ion-toolbar><ion-title>Login</ion-title></ion-toolbar></ion-header>
-      <ion-content class="ion-padding">
-        <ion-card>
-          <ion-card-content>
-            <ion-button
-              expand="block"
-              @click=${() => {
-                auth.login();
-                router.replace("/");
-              }}
-            >
-              <ion-icon slot="start" name="log-in-outline"></ion-icon>
-              Sign in
-            </ion-button>
-          </ion-card-content>
-        </ion-card>
-      </ion-content>
-    `;
-  }
-}
-
-class HomePage extends IonPage {
-  constructor(ctx: PageContext) {
-    super(ctx.lc);
-  }
-  override render() {
-    return html`<ion-content class="ion-padding">Home tab</ion-content>`;
-  }
-}
-
-class MapPage extends IonPage {
-  constructor(ctx: PageContext) {
-    super(ctx.lc);
-  }
-  override render() {
-    const router = nixRouter();
-    return html`
-      <ion-content class="ion-padding">
-        <ion-button @click=${() => router.navigate("/map/route/101")}>Open Route #101</ion-button>
-      </ion-content>
-    `;
-  }
-}
-
-class RouteDetailPage extends IonPage {
-  private id: string;
-
-  constructor(ctx: PageContext) {
-    super(ctx.lc);
-    this.id = ctx.params.id ?? "unknown";
-  }
-
-  override render() {
-    return html`
-      <ion-header>
-        <ion-toolbar>
-          <ion-buttons slot="start">${IonBackButton("/map")}</ion-buttons>
-          <ion-title>Route ${this.id}</ion-title>
-        </ion-toolbar>
-      </ion-header>
-      <ion-content class="ion-padding">Route detail page</ion-content>
-    `;
-  }
-}
-
-class ProfilePage extends IonPage {
-  constructor(ctx: PageContext) {
-    super(ctx.lc);
-  }
-  override render() {
-    const router = nixRouter();
-    return html`
-      <ion-content class="ion-padding">
-        <ion-button
-          color="danger"
-          @click=${() => {
-            auth.logout();
-            router.replace("/login");
-          }}
-        >
-          Sign out
-        </ion-button>
-      </ion-content>
-    `;
-  }
-}
-
-const requireAuth = () => (isAuthenticated.value ? true : "/login");
-
-const outlet = new IonRouterOutlet([
-  { path: "/login", component: (ctx) => new LoginPage(ctx) },
-  { path: "/", component: (ctx) => new HomePage(ctx), beforeEnter: requireAuth },
-  { path: "/map", component: (ctx) => new MapPage(ctx), beforeEnter: requireAuth },
-  { path: "/map/route/:id", component: (ctx) => new RouteDetailPage(ctx), beforeEnter: requireAuth },
-  { path: "/profile", component: (ctx) => new ProfilePage(ctx), beforeEnter: requireAuth },
-]);
-
-const tabs = createBottomTabBar(
-  [
-    { path: "/", label: "Home", icon: "home-outline", activeIcon: "home", exact: true },
-    { path: "/map", label: "Map", icon: "map-outline", activeIcon: "map" },
-    { path: "/profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
-  ],
-  {
-    navigationDirection: "root",
-    hideWhen: (path) => path === "/login" || path.startsWith("/map/route/"),
-  },
-);
-
-class App extends NixComponent {
-  override render() {
-    return html`<ion-app>${outlet}${tabs}</ion-app>`;
-  }
-}
-
-mount(new App(), "#app");
 ```
 
----
-
-## `IonBackButton()`
-
-A lightweight wrapper around `<ion-back-button>` that works with the same `ion-router` stack configured by `IonRouterOutlet`. Use `defaultHref` as fallback when no back entry exists.
-
-```typescript
-import { IonBackButton } from "@deijose/nix-ionic";
-
-// In any template — no arguments needed
-html`
-  <ion-buttons slot="start">
-    ${IonBackButton()}
-  </ion-buttons>
-`
-
-// Optional default href (navigates here if no back stack)
-${IonBackButton("/")}
+```ts
+// app entry — imports the auto-generated virtual module
+import "virtual:nix-ionic/registration";
 ```
 
----
+Features:
+- Scans `html\`\`` for `<ion-*>` tags → generates direct subpath imports
+- Scans `name="icon-name"` on `<ion-icon>` → generates `ionicons/icons` imports
+- Warns on dynamic tags/icons (with allowlist suppression)
+- `nixIonic({ allowTags: [...], allowIcons: [...] })` for dynamic usage
 
-## Lifecycle hooks
+## API reference
 
-All hooks are optional. For class components, implement the methods directly. For function components, use the composables.
+### Core
 
-| Hook | When it fires |
+| Export | Description |
 |---|---|
-| `ionViewWillEnter` | Before the view becomes visible (every activation) |
-| `ionViewDidEnter` | After the view is fully visible |
-| `ionViewWillLeave` | Before the view is hidden (stays in cache) |
-| `ionViewDidLeave` | After the view is hidden |
+| `IonRouterOutlet` | Router outlet with cache policies, guards, tabs |
+| `IonPage` | Base class for pages with lifecycle hooks |
+| `IonBackButton(defaultHref?)` | Back button component |
+| `createBottomTabBar(tabs, opts?)` | Bottom tab bar |
+| `initializeNixIonic()` | Initialize Ionic Core (incremental) |
+| `registerIonicComponents(...definers)` | Register specific components |
+| `registerIonicons(icons)` | Register specific icons |
+| `setupNixIonic(opts?)` | 1.x compatibility facade |
+| `createPageState(pageId, signals, opts?)` | Page-state persistence |
+| `clearAllPageState(backend?, ns?)` | Clear all persisted state |
+| `NavigationManager` | Single navigation authority (hooks, tabs, invalidation) |
+| `StackManager` | Per-tab navigation stack management |
 
-### Key difference from `onMount` / `onInit`
+### Overlays
 
-`onMount` and `onInit` (from Nix.js) only fire **once** when the component is first created. Ionic caches views in the stack — when the user returns to a cached view, `onMount` does NOT run again.
-
-Use `ionViewWillEnter` for anything that needs to refresh on every visit (data fetching, resetting state, restarting timers):
-
-```typescript
-// ❌ Only runs once — misses subsequent visits
-override onMount() {
-  this._fetchData();
-}
-
-// ✅ Runs on every activation
-override ionViewWillEnter() {
-  this._fetchData();
-}
-```
-
----
-
-## Route guards
-
-```typescript
-new IonRouterOutlet([
-  { path: "/", component: (ctx) => new HomePage(ctx) },
-  {
-    path: "/admin",
-    component: (ctx) => new AdminPage(ctx),
-    beforeEnter: ({ params }) => {
-      if (!isLoggedIn()) return "/login"; // redirect
-      if (!isAdmin())    return false;    // cancel navigation
-      console.log("route params", params);
-      // return void or undefined to allow
-    },
-  },
-]);
-```
-
-| Return value | Effect |
+| Export | Description |
 |---|---|
-| `void` / `undefined` | Allow navigation |
-| `false` | Cancel — stay on current view |
-| `"string"` | Redirect to that path |
-| `{ redirect: string }` | Redirect to `redirect` path |
+| `createToast()` / `createAlert()` / `createLoading()` | Reactive overlay controllers |
+| `createActionSheet()` / `createPopover()` / `createModal()` | Reactive overlay controllers |
+| `createPicker()` | Column-based picker |
+| `createModalController(delegate?)` | Modal with Nix.js delegate |
+| `createPopoverController(delegate?)` | Popover with Nix.js delegate |
+| `createNixDelegate()` | Nix.js FrameworkDelegate for overlays |
+| `showToast(opts)` | One-shot toast |
+| `withLoading(opts, task)` | Loading + async task + auto-dismiss |
+| `confirm(opts)` | Promise-based confirm dialog |
 
----
+### Capacitor (`@deijose/nix-ionic/capacitor`)
 
-## `PageContext`
+| Export | Description |
+|---|---|
+| `createCapacitorApp(opts)` | Bootstrap helper (status bar, splash, back button) |
+| `StatusBar` / `SplashScreen` / `Keyboard` | Plugin wrappers (no-op on web) |
+| `Haptics` / `App` | Plugin wrappers (no-op on web) |
+| `isNative()` / `isWeb()` | Platform detection |
 
-Every route factory receives a `PageContext`:
+### Vite plugin (`@deijose/nix-ionic/vite-plugin`)
 
-```typescript
-interface PageContext {
-  lc:     PageLifecycle;        // navigation lifecycle signals
-  params: Record<string,string>; // /detail/:id → { id: "42" }
-}
-```
+| Export | Description |
+|---|---|
+| `nixIonic(opts?)` | Vite plugin for auto-registration |
+| `generateRegistrationModule(tags, icons, opts)` | Code generator (for testing) |
 
----
-
-## API Reference
-
-### `setupNixIonic(options?)`
-
-```typescript
-setupNixIonic(options?: {
-  iconAssetPath?: string;
-  components?: ComponentDefiner[];
-  icons?: Record<string, string>;
-}): void
-```
-
-Initializes Ionic Core and registers the minimal routing components.
-
-- `components`: register only the Ionic elements your app needs.
-- `icons`: register custom Ionicons once during bootstrap (in addition to built-in back icons).
-
-### `IonRouterOutlet`
-
-```typescript
-new IonRouterOutlet(routes: RouteDefinition[])
-```
-
-Mounts `ion-router` + `ion-router-outlet` in the DOM. Registers a custom element per route. Initialize once in your app entry point.
-
-### `nixRouter()`
-
-```typescript
-nixRouter(): Router
-```
-
-Returns the active router instance from `@deijose/nix-js`. It exposes navigation methods and reactive signals:
-
-```typescript
-import { nixRouter } from "@deijose/nix-js";
-
-const router = nixRouter();
-router.navigate("/detail/42");
-router.current.value;   // current pathname
-router.params.value;    // { id: "42" }
-router.canGoBack.value; // boolean
-```
-
-### `createBottomTabBar(tabs, options?)`
-
-```typescript
-createBottomTabBar(tabs: BottomTabItem[], options?: BottomTabBarOptions): NixTemplate
-```
-
-Creates an Ionic `<ion-tab-bar>` bound to router state with active-tab logic and optional hide rules.
-
-### `IonBackButton(defaultHref?)`
-
-```typescript
-IonBackButton(defaultHref?: string): NixTemplate
-```
-
-Back button that works with the Nix router. Hidden when `canGoBack` is false.
-
-### `IonPage`
-
-Abstract class. Extend for pages that need lifecycle hooks.
-
-```typescript
-abstract class IonPage extends NixComponent {
-  constructor(lc: PageLifecycle)
-  ionViewWillEnter?(): void
-  ionViewDidEnter?():  void
-  ionViewWillLeave?(): void
-  ionViewDidLeave?():  void
-  abstract render(): NixTemplate
-}
-```
-
-### Composables
-
-```typescript
-useIonViewWillEnter(lc: PageLifecycle, fn: () => void): void
-useIonViewDidEnter(lc:  PageLifecycle, fn: () => void): void
-useIonViewWillLeave(lc: PageLifecycle, fn: () => void): void
-useIonViewDidLeave(lc:  PageLifecycle, fn: () => void): void
-```
-
----
-
-## Comparison with other frameworks
+## Comparison
 
 | Feature | `@ionic/angular` | `@ionic/react` | `@deijose/nix-ionic` |
 |---|---|---|---|
-| Router integration | Angular Router | React Router | `ion-router` (vanilla) |
-| View cache | ✅ | ✅ | ✅ native |
-| Page transitions | ✅ | ✅ | ✅ native |
-| iOS swipe back | ✅ | ✅ | ✅ native |
-| `ion-back-button` | native | wrapper | wrapper |
-| Lifecycle hooks | directive | hooks | `IonPage` / composables |
-| Navigation API | `NavController` | `useHistory` | `nixRouter()` |
-| Modular loading | ❌ | ❌ | ✅ tree-shakeable |
-
-
-## Project setup
-
-### Prerequisites
-
-| Tool | Version | Install |
-|---|---|---|
-| Node.js | ≥ 18 | [nodejs.org](https://nodejs.org) |
-| npm | ≥ 9 | included with Node |
-| Capacitor CLI | latest | `npm i -g @capacitor/cli` |
-| Android Studio | latest | [developer.android.com](https://developer.android.com/studio) |
-| Xcode | ≥ 14 | Mac App Store |
-
----
-
-## Create a new project
-
-```bash
-# 1. Scaffold a Vite + TypeScript project
-npm create vite@latest my-app -- --template vanilla-ts
-cd my-app
-
-# 2. Install dependencies
-npm install
-
-# 3. Install Nix.js + Ionic + nix-ionic
-npm install @deijose/nix-js @ionic/core @deijose/nix-ionic
-
-# 4. Install Capacitor (for native iOS / Android)
-npm install @capacitor/core @capacitor/cli
-npm install @capacitor/android @capacitor/ios
-```
-
----
-
-## Recommended folder structure
-
-```
-my-app/
-├── android/                      ← generated by Capacitor (do not edit manually)
-├── ios/                          ← generated by Capacitor (do not edit manually)
-├── public/
-│   └── favicon.ico
-├── src/
-│   ├── ionic-nix/                ← copy from @deijose/nix-ionic if customizing
-│   │   ├── IonRouterOutlet.ts
-│   │   ├── lifecycle.ts
-│   │   └── index.ts
-│   │
-│   ├── pages/                    ← one file per screen
-│   │   ├── HomePage.ts
-│   │   ├── DetailPage.ts
-│   │   └── ProfilePage.ts
-│   │
-│   ├── components/               ← reusable UI components (not pages)
-│   │   ├── PostCard.ts
-│   │   └── Avatar.ts
-│   │
-│   ├── stores/                   ← global state via Nix.js createStore()
-│   │   ├── auth.ts
-│   │   └── cart.ts
-│   │
-│   ├── services/                 ← API calls, business logic
-│   │   ├── api.ts
-│   │   └── storage.ts
-│   │
-│   ├── style.css                 ← global styles + Ionic CSS imports
-│   └── main.ts                   ← app entry point
-│
-├── index.html
-├── capacitor.config.ts
-├── package.json
-├── tsconfig.json
-└── vite.config.ts
-```
-
-### `main.ts` — entry point
-
-```typescript
-// 1. Core Styles (order matters)
-import "@ionic/core/css/core.css";
-import "@ionic/core/css/normalize.css";
-import "@ionic/core/css/structure.css";
-import "@ionic/core/css/typography.css";
-import "@ionic/core/css/padding.css";
-import "@ionic/core/css/flex-utils.css";
-import "@ionic/core/css/display.css";
-import "./style.css";
-
-// 2. Framework Imports
-import { NixComponent, html, mount } from "@deijose/nix-js";
-import { setupNixIonic, IonRouterOutlet } from "@deijose/nix-ionic";
-import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
-import { buttonComponents } from "@deijose/nix-ionic/bundles/buttons";
-
-// 3. Pages
-import { HomePage }   from "./pages/HomePage";
-import { DetailPage } from "./pages/DetailPage";
-
-// Configure and inject Ionic Core
-setupNixIonic({
-  components: [...layoutComponents, ...buttonComponents],
-});
-
-// 4. Router Configuration
-const outlet = new IonRouterOutlet([
-  { path: "/",           component: (ctx) => new HomePage(ctx)   },
-  { path: "/detail/:id", component: (ctx) => new DetailPage(ctx) }
-]);
-
-// 5. App Component
-class App extends NixComponent {
-  override render() {
-    return html`<ion-app>${outlet}</ion-app>`;
-  }
-}
-
-// 6. Bootstrap
-mount(new App(), "#app");
-```
-
-### `index.html` — root HTML
-
-```html
-<!DOCTYPE html>
-<html lang="en" dir="ltr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="viewport-fit=cover, width=device-width, initial-scale=1.0,
-               minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>My App</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
-</html>
-```
-
-### `capacitor.config.ts`
-
-```typescript
-import type { CapacitorConfig } from "@capacitor/cli";
-
-const config: CapacitorConfig = {
-  appId: "com.example.myapp",
-  appName: "My App",
-  webDir: "dist",
-};
-
-export default config;
-```
-
-### `vite.config.ts`
-
-```typescript
-import { defineConfig } from "vite";
-
-export default defineConfig({
-  optimizeDeps: {
-    exclude: ["@ionic/core"],
-  },
-  build: {
-    rollupOptions: {
-      output: { manualChunks: undefined },
-    },
-  },
-});
-```
-
----
-
-## Development commands
-
-### Web
-
-```bash
-# Start dev server (hot reload)
-npm run dev
-
-# Type check
-npx tsc --noEmit
-
-# Production build
-npm run build
-
-# Preview production build
-npm run preview
-```
-
----
-
-## Android
-
-### First-time setup
-
-```bash
-# 1. Build the web app
-npm run build
-
-# 2. Initialize Capacitor (only once)
-npx cap init "My App" "com.example.myapp" --web-dir dist
-
-# 3. Add Android platform
-npx cap add android
-
-# 4. Sync web assets to native project
-npx cap sync android
-```
-
-### Daily workflow
-
-```bash
-# After any change to web code:
-npm run build
-npx cap sync android
-
-# Open in Android Studio (run / debug from there)
-npx cap open android
-
-# Or run directly on a connected device / emulator
-npx cap run android
-```
-
-### Live reload on Android (dev)
-
-```bash
-# Start dev server first
-npm run dev
-
-# In a second terminal — live reload on device
-npx cap run android --livereload --external
-```
-
-> **Note:** device and computer must be on the same Wi-Fi network for live reload.
-
----
-
-## iOS
-
-> Requires macOS + Xcode.
-
-### First-time setup
-
-```bash
-# 1. Build the web app
-npm run build
-
-# 2. Add iOS platform
-npx cap add ios
-
-# 3. Sync
-npx cap sync ios
-```
-
-### Daily workflow
-
-```bash
-npm run build
-npx cap sync ios
-
-# Open in Xcode (run / debug from there)
-npx cap open ios
-
-# Or run on simulator
-npx cap run ios
-```
-
-### Live reload on iOS (dev)
-
-```bash
-npm run dev
-npx cap run ios --livereload --external
-```
-
----
-
-## Capacitor plugins
-
-Add any official Capacitor plugin the same way:
-
-```bash
-# Camera
-npm install @capacitor/camera
-npx cap sync
-
-# Filesystem
-npm install @capacitor/filesystem
-npx cap sync
-
-# Push notifications
-npm install @capacitor/push-notifications
-npx cap sync
-```
-
-Then use them in your services:
-
-```typescript
-// src/services/camera.ts
-import { Camera, CameraResultType } from "@capacitor/camera";
-
-export async function takePhoto(): Promise<string> {
-  const photo = await Camera.getPhoto({
-    quality:      90,
-    allowEditing: false,
-    resultType:   CameraResultType.DataUrl,
-  });
-  return photo.dataUrl ?? "";
-}
-```
-
----
-
-## Page template
-
-Copy this as a starting point for any new page:
-
-```typescript
-// src/pages/MyPage.ts
-import { html, signal, nixRouter } from "@deijose/nix-js";
-import type { NixTemplate } from "@deijose/nix-js";
-import { IonPage, IonBackButton } from "@deijose/nix-ionic";
-import type { PageContext } from "@deijose/nix-ionic";
-
-export class MyPage extends IonPage {
-  private data = signal<string | null>(null);
-
-  constructor({ lc, params }: PageContext) {
-    super(lc);
-    // params contains dynamic route segments
-    // e.g. for /my/:id → params["id"]
-  }
-
-  // Runs on EVERY visit (initial + returning from stack)
-  override ionViewWillEnter(): void {
-    this._load();
-  }
-
-  // Runs when navigating away (view stays cached)
-  override ionViewWillLeave(): void {
-    // pause subscriptions, timers, etc.
-  }
-
-  private async _load(): Promise<void> {
-    // fetch data
-  }
-
-  override render(): NixTemplate {
-    const router = nixRouter();
-
-    return html`
-      <ion-header>
-        <ion-toolbar>
-          <ion-buttons slot="start">
-            ${IonBackButton()}
-          </ion-buttons>
-          <ion-title>My Page</ion-title>
-        </ion-toolbar>
-      </ion-header>
-
-      <ion-content class="ion-padding">
-        <p>${() => this.data.value ?? "Loading..."}</p>
-
-        <ion-button @click=${() => router.navigate("/other")}>
-          Go somewhere
-        </ion-button>
-      </ion-content>
-    `;
-  }
-}
-```
-
-Register it in `main.ts`:
-
-```typescript
-{ path: "/my/:id", component: (ctx) => new MyPage(ctx) },
-```
-
----
+| Virtual DOM | Angular | React | **None** |
+| Bundle size overhead | Angular runtime | React runtime | **Zero** |
+| Tree-shakeable components | No | No | **Yes** |
+| Auto-registration plugin | No | No | **Yes** (Vite) |
+| Cache policies (LRU/TTL) | No | No | **Yes** |
+| Page-state persistence | Manual | Manual | **Built-in** |
+| Capacitor integration | External | External | **Optional subpath** |
+| Reactive overlays | Manual | Manual | **`create*` pattern** |
 
 ## Testing
 
-`@deijose/nix-ionic` uses **Vitest** with `happy-dom` and `@deijose/nix-js-testing` for unit tests and coverage.
+All tests run against real `@ionic/core` (no mocks).
 
-### Run the test suite
+| Suite | Tests | What it covers |
+|---|---|---|
+| Unit (Vitest) | 235 | Cache policies, navigation, overlays, page-state, Capacitor, Vite plugin, bundles |
+| E2E application | 19 | Navigation, lifecycle, overlays (toast/modal/alert/loading/action-sheet/picker), back button |
+| E2E contract | 24 | Custom elements, `commit()`, lifecycle events, overlay present/dismiss, properties, form events, network isolation |
+| E2E accessibility/leaks | 13 | ARIA roles, shadow DOM, focus management, repeated navigation, overlay disposal, listener cleanup |
 
-```bash
-npm run test
-```
+**Total: 291 tests, all passing.**
 
-### Run tests with coverage
-
-```bash
-npm run test:coverage
-```
-
-Coverage reports are generated in the `coverage/` directory.
-
-### Test stack
-
-- **Vitest** — test runner and assertion framework.
-- **happy-dom** — lightweight DOM implementation for component tests.
-- **@deijose/nix-js-testing** — `render`, `cleanup`, `fireEvent`, `screen`, and `waitFor` helpers for Nix.js components.
-- **Mock Ionic components** — located in `src/__tests__/mocks/ionic.ts` to simulate `ion-router-outlet`, `ion-back-button`, and other Ionic custom elements without loading the full `@ionic/core` bundle.
-
-### Writing tests
-
-Tests live in `src/__tests__/`. Each major module has its own test file:
-
-- `setup.test.ts` — `setupNixIonic()` and component/icon registration.
-- `lifecycle.test.ts` — `IonPage`, `createPageLifecycle`, and lifecycle composables.
-- `tabs.test.ts` — `createBottomTabBar` and tab navigation behavior.
-- `components.test.ts` — individual component definers.
-- `bundles.test.ts` — component bundle exports.
-- `IonRouterOutlet.test.ts` — routing, guards, cache, lifecycle hooks, and back button.
-
-Use `waitFor` for reactive DOM updates and reset the global router state between tests with `_resetRouter()` from `@deijose/nix-js/router` when needed.
-
-## Build for production
+### Bundle validation
 
 ```bash
-# Web PWA
-npm run build
-# Output in dist/ — deploy to any static host (Vercel, Netlify, etc.)
-
-# Android APK / AAB
-npm run build
-npx cap sync android
-npx cap open android
-# In Android Studio: Build → Generate Signed Bundle/APK
-
-# iOS IPA
-npm run build
-npx cap sync ios
-npx cap open ios
-# In Xcode: Product → Archive
+npm run measure-bundles
 ```
 
+Validates tree-shaking with 4 fixtures:
+
+| Fixture | Gzip | Purpose |
+|---|---|---|
+| minimal (1 component) | 0.82 KB | Only `ion-button` — no other component code |
+| partial (layout + buttons) | 1.05 KB | Two bundles — no forms/lists/overlays |
+| full (all + overlays + nav) | 7.26 KB | Worst-case bundle |
+| capacitor-only | 0.59 KB | Zero `@capacitor/*` in web bundle |
+
+Minimal = 11.3% of full bundle (gzip) — tree-shaking works.
+
+## Limitations
+
+### iOS swipe-back gesture
+
+iOS swipe-back (interactive pop gesture) is **not supported**. The integration
+does not assign `swipeHandler` on `ion-router-outlet`. Native swipe-back requires
+a WebKit/mobile test that reproduces both a completed swipe and a cancelled
+swipe with correct lifecycle rollback — this has not been demonstrated.
+
+Use `ion-back-button` or programmatic `router.back()` for back navigation.
 
 ## License
 
-[MIT](https://opensource.org/licenses/MIT)
-
----
+MIT

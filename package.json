@@ -1,6 +1,6 @@
 {
   "name": "@deijose/nix-ionic",
-  "version": "1.4.14",
+  "version": "2.0.0",
   "description": "Ionic lifecycle & router bridge for Nix.js",
   "license": "MIT",
   "author": "Deiver Vasquez",
@@ -46,6 +46,16 @@
       "require": "./dist/lib/components.cjs",
       "types": "./dist/lib/components.d.ts"
     },
+    "./components/manifest": {
+      "import": "./dist/lib/components/manifest.js",
+      "require": "./dist/lib/components/manifest.cjs",
+      "types": "./dist/lib/components/manifest.d.ts"
+    },
+    "./components/*": {
+      "import": "./dist/lib/components/*.js",
+      "require": "./dist/lib/components/*.cjs",
+      "types": "./dist/lib/components/*.d.ts"
+    },
     "./bundles/layout": {
       "import": "./dist/lib/bundles/layout.js",
       "require": "./dist/lib/bundles/layout.cjs",
@@ -90,11 +100,38 @@
       "import": "./dist/lib/tabs.js",
       "require": "./dist/lib/tabs.cjs",
       "types": "./dist/lib/tabs.d.ts"
+    },
+    "./overlays": {
+      "import": "./dist/lib/overlays.js",
+      "require": "./dist/lib/overlays.cjs",
+      "types": "./dist/lib/overlays.d.ts"
+    },
+    "./vite-plugin": {
+      "import": "./dist/lib/vite-plugin.js",
+      "require": "./dist/lib/vite-plugin.cjs",
+      "types": "./dist/lib/vite-plugin.d.ts"
+    },
+    "./capacitor": {
+      "import": "./dist/lib/capacitor.js",
+      "require": "./dist/lib/capacitor.cjs",
+      "types": "./dist/lib/capacitor.d.ts"
+    },
+    "./page-state": {
+      "import": "./dist/lib/page-state.js",
+      "require": "./dist/lib/page-state.cjs",
+      "types": "./dist/lib/page-state.d.ts"
+    },
+    "./navigation": {
+      "import": "./dist/lib/navigation.js",
+      "require": "./dist/lib/navigation.cjs",
+      "types": "./dist/lib/navigation.d.ts"
     }
   },
   "files": [
     "dist/lib",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "MIGRATION.md"
   ],
   "sideEffects": false,
   "engines": {
@@ -109,24 +146,56 @@
     "prepack": "npm run clean:lib && npm run build:lib",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "e2e:serve": "vite --config vite.e2e.config.ts",
+    "e2e": "npx playwright test",
+    "e2e:headed": "npx playwright test --headed",
+    "measure-bundles": "node scripts/measure-bundles.mjs"
   },
   "peerDependencies": {
-    "@deijose/nix-js": "^2.5.3 || ^3.0.0"
+    "@deijose/nix-js": "^2.5.3 || ^3.0.0",
+    "@ionic/core": "^8.0.0",
+    "ionicons": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@capacitor/core": {
+      "optional": true
+    },
+    "@capacitor/app": {
+      "optional": true
+    },
+    "@capacitor/status-bar": {
+      "optional": true
+    },
+    "@capacitor/splash-screen": {
+      "optional": true
+    },
+    "@capacitor/keyboard": {
+      "optional": true
+    },
+    "@capacitor/haptics": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/keyboard": "^8.0.5",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3",
     "@deijose/nix-js": "3.2.1",
     "@deijose/nix-js-testing": "^0.1.4",
+    "@ionic/core": "^8.8.1",
+    "@playwright/test": "^1.62.1",
+    "@types/babel__traverse": "^7.28.0",
     "@vitest/coverage-v8": "^4.1.9",
     "happy-dom": "^20.8.3",
+    "ionicons": "^8.0.13",
     "terser": "^5.46.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.0",
     "vite-plugin-dts": "^4.5.4",
     "vitest": "^4.1.9"
-  },
-  "dependencies": {
-    "@ionic/core": "^8.8.1",
-    "ionicons": "^8.0.13"
   }
 }

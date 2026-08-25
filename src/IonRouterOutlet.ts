@@ -46,9 +46,9 @@ import {
     type RouteRecord,
     type NavigationGuard,
     type NavigationIntent,
-    type NavigationDirection,
 } from "@deijose/nix-js";
-import { createPageLifecycle, type PageLifecycle } from "./lifecycle";
+import { createPageLifecycle, _connectIonicLifecycle, type PageLifecycle } from "./lifecycle";
+import { NavigationManager, StackManager } from "./navigation";
 
 export type GuardResult =
     | boolean
@@ -60,19 +60,59 @@ export type GuardResult =
 export interface PageContext {
     lc: PageLifecycle;
     params: Record<string, string>;
+    query: Record<string, string>;
 }
 
 export interface RouteDefinition {
     path: string;
     component: (ctx: PageContext) => NixComponent | NixTemplate;
     beforeEnter?: (ctx: PageContext) => GuardResult | Promise<GuardResult>;
+    /**
+     * Per-route cache policy override. When set, takes precedence over the
+     * outlet-level policy for this route.
+     *
+     * - `true` — use the outlet's default cache policy
+     * - `false` — never cache this route (cleanup on leave)
+     * - `{ max: N }` — cache at most N instances of this route
+     * - `{ ttl: N }` — cache entries expire after N milliseconds
+     * - `{ max: N, ttl: N }` — both bounds
+     */
+    cache?: boolean | CachePolicy;
+}
+
+/**
+ * Bounded cache policy for cached pages.
+ *
+ * - `max`: maximum number of cached entries per tab. When exceeded, the
+ *   least-recently-used entry is evicted. Default: unlimited.
+ * - `ttl`: time-to-live in milliseconds. Entries older than this are
+ *   evicted on next access or by a background timer. Default: unlimited.
+ * - `strategy`: "lru" (default) evicts the least-recently-used entry when
+ *   `max` is reached. "fifo" evicts the oldest entry.
+ */
+export interface CachePolicy {
+    max?: number;
+    ttl?: number;
+    strategy?: "lru" | "fifo";
 }
 
 export interface IonRouterOutletOptions {
+    /** Enable/disable caching globally. Set to false to disable all caching. */
     cache?: boolean;
+    /**
+     * Bounded cache policy applied to all cached routes (unless overridden
+     * per-route via `RouteDefinition.cache`).
+     */
+    cachePolicy?: CachePolicy;
     defaultAnimation?: unknown;
     tabs?: string[];
     skipAutoBootstrap?: boolean;
+    /**
+     * Optional NavigationManager for centralized navigation state, hooks,
+     * and programmatic tab switching. When provided, the outlet delegates
+     * stack management and transition state to the manager.
+     */
+    navigation?: NavigationManager;
 }
 
 function adaptGuardForCore(
@@ -81,9 +121,32 @@ function adaptGuardForCore(
 ): NavigationGuard {
     return (to: string, _from: string) => {
         const params = extractParamsFromPath(routePath, to);
+        const query = extractQueryFromPath(to);
         const lc = createPageLifecycle();
-        return pageGuard({ lc, params }) as any;
+        return pageGuard({ lc, params, query }) as any;
     };
+}
+
+function extractQueryFromPath(path: string): Record<string, string> {
+    const qIndex = path.indexOf("?");
+    if (qIndex === -1) return {};
+    const search = path.slice(qIndex + 1);
+    const result: Record<string, string> = {};
+    for (const pair of search.split("&")) {
+        if (!pair) continue;
+        const eq = pair.indexOf("=");
+        if (eq === -1) {
+            result[pair] = "";
+        } else {
+            const k = pair.slice(0, eq);
+            try {
+                result[k] = decodeURIComponent(pair.slice(eq + 1));
+            } catch {
+                result[k] = pair.slice(eq + 1);
+            }
+        }
+    }
+    return result;
 }
 
 function extractParamsFromPath(pattern: string, actual: string): Record<string, string> {
@@ -128,6 +191,16 @@ interface CachedView {
     lc: PageLifecycle;
     cleanup: () => void;
     cacheKey: string;
+    /** Timestamp of last access (for LRU). */
+    lastAccessed: number;
+    /** Timestamp of creation (for TTL). */
+    createdAt: number;
+    /** Route path (for route-level policy lookup). */
+    routePath: string;
+    /** Per-route policy override (null = use outlet default). */
+    routePolicy: CachePolicy | false | null;
+    /** TTL timer handle (if TTL is set). */
+    ttlTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const IONIC_STATE_CLASSES_TO_RESET = ["ion-page-hidden", "can-go-back"];
@@ -148,15 +221,35 @@ function _hasDynamicSegments(path: string): boolean {
     return path.includes(":");
 }
 
-function _buildCacheKey(routePath: string, params: Record<string, string>): string {
-    if (!_hasDynamicSegments(routePath) || Object.keys(params).length === 0) {
-        return routePath;
+function _buildCacheKey(
+    routePath: string,
+    params: Record<string, string>,
+    query?: Record<string, string>,
+): string {
+    const parts: string[] = [];
+
+    // Params segment — only when the route has dynamic segments.
+    if (_hasDynamicSegments(routePath) && params && Object.keys(params).length > 0) {
+        parts.push(
+            Object.keys(params)
+                .sort()
+                .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+                .join("&"),
+        );
     }
-    const sorted = Object.keys(params)
-        .sort()
-        .map((k) => `${k}=${params[k]}`)
-        .join("&");
-    return `${routePath}?${sorted}`;
+
+    // Query segment — encoded to avoid collisions (e.g. x=1&y=2 vs x=1y=2).
+    if (query && Object.keys(query).length > 0) {
+        parts.push(
+            Object.keys(query)
+                .sort()
+                .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(query[k])}`)
+                .join("&"),
+        );
+    }
+
+    if (parts.length === 0) return routePath;
+    return `${routePath}?${parts.join("&")}`;
 }
 
 /**
@@ -175,87 +268,30 @@ function _dispatchIonicLifecycle(
     }));
 }
 
-interface TabStack {
-    prefix: string;
-    entries: string[];
-}
-
-class StackManager {
-    private _stacks = new Map<string, TabStack>();
-    private _activeTabKey: string;
-    private _tabPrefixes: string[];
-
-    constructor(tabs: string[] | undefined) {
-        this._stacks.set("", { prefix: "", entries: [] });
-        if (tabs?.length) {
-            for (const prefix of tabs) {
-                const norm = this._normalize(prefix);
-                this._stacks.set(norm, { prefix: norm, entries: [] });
-            }
-            this._tabPrefixes = tabs.map((t) => this._normalize(t))
-                .sort((a, b) => b.length - a.length);
-        } else {
-            this._tabPrefixes = [];
-        }
-        this._activeTabKey = "";
-    }
-
-    keyForPath(path: string): string {
-        for (const prefix of this._tabPrefixes) {
-            if (path === prefix || path.startsWith(prefix + "/")) {
-                return prefix;
-            }
-        }
-        return "";
-    }
-
-    apply(path: string, intent: NavigationIntent): NavigationDirection {
-        const targetKey = this.keyForPath(path);
-        const stack = this._stacks.get(targetKey)!;
-
-        if (targetKey !== this._activeTabKey) {
-            this._activeTabKey = targetKey;
-            const top = stack.entries[stack.entries.length - 1];
-            if (top !== path) stack.entries.push(path);
-            return "none";
-        }
-
-        if (intent.direction === "back") {
-            while (stack.entries.length > 0
-                && stack.entries[stack.entries.length - 1] !== path) {
-                stack.entries.pop();
-            }
-            if (stack.entries.length === 0) stack.entries.push(path);
-            return "back";
-        }
-
-        if (intent.action === "replace" || intent.direction === "root") {
-            if (stack.entries.length === 0) stack.entries.push(path);
-            else stack.entries[stack.entries.length - 1] = path;
-            return intent.direction === "forward" ? "forward" : "root";
-        }
-
-        if (intent.action === "initial") {
-            if (stack.entries.length === 0) stack.entries.push(path);
-            return "none";
-        }
-
-        const top = stack.entries[stack.entries.length - 1];
-        if (top !== path) stack.entries.push(path);
-        return intent.direction;
-    }
-
-    private _normalize(p: string): string {
-        if (!p || p === "/") return "/";
-        return p.endsWith("/") ? p.slice(0, -1) : p;
-    }
-}
+/**
+ * Tracks cleanup functions for pages that are NOT in the cache (cache:false
+ * mode). Without this, effects/lifecycle watchers leak when a non-cached
+ * page is removed from the DOM.
+ */
+const _uncachedCleanups = new WeakMap<HTMLElement, () => void>();
 
 class CacheRegistry {
     private _byTab = new Map<string, Map<string, CachedView>>();
+    /** Eviction callback — called when an entry is evicted by policy. */
+    private _onEvict: ((view: CachedView) => void) | null = null;
+
+    /** Set the eviction callback for policy-driven evictions. */
+    onEvict(cb: (view: CachedView) => void): void {
+        this._onEvict = cb;
+    }
 
     get(tabKey: string, cacheKey: string): CachedView | undefined {
-        return this._byTab.get(tabKey)?.get(cacheKey);
+        const view = this._byTab.get(tabKey)?.get(cacheKey);
+        if (view) {
+            // Update LRU timestamp on access
+            view.lastAccessed = Date.now();
+        }
+        return view;
     }
 
     set(tabKey: string, cacheKey: string, view: CachedView): void {
@@ -265,7 +301,85 @@ class CacheRegistry {
     }
 
     delete(tabKey: string, cacheKey: string): void {
+        const map = this._byTab.get(tabKey);
+        if (!map) return;
+        const view = map.get(cacheKey);
+        if (view?.ttlTimer) {
+            clearTimeout(view.ttlTimer);
+            view.ttlTimer = null;
+        }
+        map.delete(cacheKey);
+    }
+
+    /**
+     * Enforce cache policy for a specific tab. Evicts entries that exceed
+     * `max` or have expired by `ttl`. Returns the number of evicted entries.
+     */
+    enforcePolicy(
+        tabKey: string,
+        policy: CachePolicy,
+        routePolicies: Map<string, boolean | CachePolicy>,
+    ): number {
+        const map = this._byTab.get(tabKey);
+        if (!map) return 0;
+
+        let evicted = 0;
+
+        // 1. TTL expiry — check all entries
+        const now = Date.now();
+        for (const [cacheKey, view] of map) {
+            const effectivePolicy = this._getEffectivePolicy(view.routePath, routePolicies, policy);
+            if (effectivePolicy === false) continue; // not cached
+            const ttl = effectivePolicy.ttl;
+            if (ttl && now - view.createdAt > ttl) {
+                this._evict(tabKey, cacheKey, view);
+                evicted++;
+            }
+        }
+
+        // 2. Max enforcement — evict LRU/FIFO entries until under max
+        const max = policy.max;
+        if (max && map.size > max) {
+            const strategy = policy.strategy ?? "lru";
+            const entries = [...map.entries()];
+            // Sort by eviction priority
+            if (strategy === "lru") {
+                entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
+            } else {
+                // FIFO — oldest creation first
+                entries.sort((a, b) => a[1].createdAt - b[1].createdAt);
+            }
+            const toEvict = map.size - max;
+            for (let i = 0; i < toEvict; i++) {
+                const [cacheKey, view] = entries[i];
+                this._evict(tabKey, cacheKey, view);
+                evicted++;
+            }
+        }
+
+        return evicted;
+    }
+
+    private _getEffectivePolicy(
+        routePath: string,
+        routePolicies: Map<string, boolean | CachePolicy>,
+        defaultPolicy: CachePolicy,
+    ): CachePolicy | false {
+        const routeOverride = routePolicies.get(routePath);
+        if (routeOverride === false) return false;
+        if (routeOverride === true) return defaultPolicy;
+        if (routeOverride && typeof routeOverride === "object") return routeOverride;
+        return defaultPolicy;
+    }
+
+    private _evict(tabKey: string, cacheKey: string, view: CachedView): void {
+        if (view.ttlTimer) {
+            clearTimeout(view.ttlTimer);
+            view.ttlTimer = null;
+        }
         this._byTab.get(tabKey)?.delete(cacheKey);
+        // Run cleanup + remove DOM
+        this._onEvict?.(view);
     }
 
     *all(): Generator<{ tabKey: string; cacheKey: string; view: CachedView }> {
@@ -277,6 +391,11 @@ class CacheRegistry {
     }
 
     clear(): void {
+        for (const map of this._byTab.values()) {
+            for (const view of map.values()) {
+                if (view.ttlTimer) clearTimeout(view.ttlTimer);
+            }
+        }
         this._byTab.clear();
     }
 }
@@ -298,7 +417,11 @@ export function IonBackButton(defaultHref: string = "/"): NixTemplate {
                 ev.preventDefault();
                 ev.stopPropagation();
                 const router = nixRouter();
-                if (router.canGoBack.value) {
+                // Use NavigationManager's canGoBack when available (per-tab),
+                // otherwise fall back to the router's global canGoBack.
+                const nav = _activeNavigationManager;
+                const canGoBack = nav ? nav.canGoBack.value : router.canGoBack.value;
+                if (canGoBack) {
                     router.back();
                 } else {
                     router.replace(defaultHref);
@@ -314,13 +437,24 @@ export function IonBackButton(defaultHref: string = "/"): NixTemplate {
     };
 }
 
+/**
+ * Internal registry for the active NavigationManager, set by IonRouterOutlet
+ * when it has one. This allows IonBackButton to use per-tab canGoBack
+ * without prop drilling.
+ */
+let _activeNavigationManager: NavigationManager | null = null;
+
 export class IonRouterOutlet extends NixComponent {
     private _routesByPath = new Map<string, RouteDefinition>();
+    private _wildcardRoute: RouteDefinition | null = null;
     private _enableCache: boolean;
+    private _cachePolicy: CachePolicy;
+    private _routeCachePolicies = new Map<string, boolean | CachePolicy>();
     private _defaultAnimation: unknown;
 
     private _stacks: StackManager;
     private _cache = new CacheRegistry();
+    private _nav: NavigationManager | null;
 
     private _activePageEl: HTMLElement | null = null;
     private _activeCacheKey: string | null = null;
@@ -330,21 +464,88 @@ export class IonRouterOutlet extends NixComponent {
     private _routeEffectDisposer: (() => void) | null = null;
 
     private _isTransitioning = false;
-    private _pendingNav: { path: string } | null = null;
+    private _pendingNav: { path: string; intent: NavigationIntent } | null = null;
+    // True when the outlet auto-bootstrapped the core router with page guards
+    // registered. In that case _transitionTo must NOT re-run beforeEnter
+    // (the core router already did) — otherwise guards fire twice.
+    private _guardsInCoreRouter: boolean;
 
     constructor(routes: RouteDefinition[], opts: IonRouterOutletOptions = {}) {
         super();
         this._enableCache = opts.cache ?? true;
+        this._cachePolicy = opts.cachePolicy ?? {};
         this._defaultAnimation = opts.defaultAnimation;
-        this._stacks = new StackManager(opts.tabs);
 
-        for (const r of routes) {
-            if (r.path === "*") continue;
-            this._routesByPath.set(r.path, r);
+        // Use provided NavigationManager or create an internal one
+        if (opts.navigation) {
+            this._nav = opts.navigation;
+            this._stacks = opts.navigation.stacks;
+            _activeNavigationManager = opts.navigation;
+        } else {
+            this._nav = null;
+            this._stacks = new StackManager(opts.tabs);
         }
 
-        if (!opts.skipAutoBootstrap && !_hasActiveRouter()) {
+        for (const r of routes) {
+            if (r.path === "*") {
+                if (this._wildcardRoute) {
+                    console.warn(
+                        `[nix-ionic] Duplicate wildcard route "*" — the previous ` +
+                        `fallback will be overwritten. Define only one "*" route.`,
+                    );
+                }
+                this._wildcardRoute = r;
+                continue;
+            }
+            if (this._routesByPath.has(r.path)) {
+                console.warn(
+                    `[nix-ionic] Duplicate route path "${r.path}" — the previous ` +
+                    `definition will be overwritten. Each route path must be unique.`,
+                );
+            }
+            this._routesByPath.set(r.path, r);
+            // Collect per-route cache policy overrides
+            if (r.cache !== undefined) {
+                this._routeCachePolicies.set(r.path, r.cache);
+            }
+        }
+
+        // Set up eviction callback — runs cleanup + removes DOM
+        this._cache.onEvict((view) => {
+            try {
+                view.cleanup();
+            } catch { /* ignore */ }
+            if (view.pageEl.parentElement) {
+                view.pageEl.remove();
+            }
+        });
+
+        this._guardsInCoreRouter = !opts.skipAutoBootstrap && !_hasActiveRouter();
+        if (this._guardsInCoreRouter) {
             createRouter(buildCoreRouteRecords(routes));
+        }
+
+        // Register cache invalidation handlers on the NavigationManager
+        if (this._nav) {
+            for (const r of routes) {
+                if (r.path === "*") continue;
+                this._nav.registerInvalidationHandler(r.path, (params) => {
+                    if (params) {
+                        this.invalidateCache(r.path, params);
+                    } else {
+                        // Invalidate all instances of this route
+                        for (const entry of this._cache.all()) {
+                            if (entry.view.routePath === r.path) {
+                                this.invalidateCache(
+                                    r.path,
+                                    undefined,
+                                    entry.tabKey,
+                                );
+                            }
+                        }
+                    }
+                });
+            }
         }
     }
 
@@ -356,8 +557,13 @@ export class IonRouterOutlet extends NixComponent {
         const resolved = router.resolve(currentPath);
         if (!resolved.matched || !resolved.route) return null;
         const def = this._routesByPath.get(resolved.route.path);
-        if (!def) return null;
-        return { def, params: resolved.params };
+        if (def) return { def, params: resolved.params };
+        // Fallback to the wildcard route (if any) when the core router matched
+        // a "*" route that the outlet excluded from _routesByPath.
+        if (this._wildcardRoute) {
+            return { def: this._wildcardRoute, params: resolved.params };
+        }
+        return null;
     }
 
     private _createPageEl(): { pageEl: HTMLElement; lc: PageLifecycle } {
@@ -384,6 +590,13 @@ export class IonRouterOutlet extends NixComponent {
         const node = def.component(ctx);
         if ("render" in node && typeof (node as NixComponent).render === "function") {
             const comp = node as NixComponent;
+            // Connect Ionic lifecycle via the symbol-based internal API so
+            // the contract does NOT depend on subclasses calling super.onInit().
+            // IonPage implements this symbol; other NixComponents ignore it.
+            let lifecycleDispose: (() => void) | null = null;
+            if (_connectIonicLifecycle in comp) {
+                lifecycleDispose = (comp as any)[_connectIonicLifecycle]();
+            }
             comp.onInit?.();
             const renderCleanup = comp.render()._render(pageEl, null);
             const mountRet = comp.onMount?.();
@@ -391,6 +604,7 @@ export class IonRouterOutlet extends NixComponent {
                 comp.onUnmount?.();
                 if (typeof mountRet === "function") mountRet();
                 renderCleanup();
+                lifecycleDispose?.();
             };
         } else {
             return (node as NixTemplate)._render(pageEl, null);
@@ -423,28 +637,62 @@ export class IonRouterOutlet extends NixComponent {
         if (!resolved) return;
 
         const { def, params } = resolved;
-        const cacheKey = _buildCacheKey(def.path, params);
+        const router = nixRouter();
+        const query = router.query.value;
+        const cacheKey = _buildCacheKey(def.path, params, query);
         const targetTabKey = this._stacks.keyForPath(targetPath);
 
-        if (cacheKey === this._activeCacheKey && targetTabKey === this._activeTabKey) return;
-
         if (this._isTransitioning) {
-            this._pendingNav = { path: targetPath };
+            // Preserve full intent metadata (direction, animation, action)
+            // so the deferred navigation behaves identically to the original.
+            if (this._nav) {
+                this._nav.setPendingNav(targetPath, intent);
+            } else {
+                this._pendingNav = { path: targetPath, intent };
+            }
             return;
         }
+
+        if (cacheKey === this._activeCacheKey && targetTabKey === this._activeTabKey) return;
         this._isTransitioning = true;
+        if (this._nav) this._nav.beginTransition();
+        let transitionCancelled = false;
+
+        // Run beforeNav hooks from NavigationManager
+        if (this._nav) {
+            const allowed = await this._nav.runBeforeNav(targetPath, intent);
+            if (!allowed) {
+                this._isTransitioning = false;
+                this._nav.endTransition();
+                return;
+            }
+        }
 
         try {
-            // Page-level guard
-            if (def.beforeEnter) {
+            // Page-level guard — only run here if the core router is NOT
+            // already handling it (skipAutoBootstrap or external router).
+            // When the outlet auto-bootstrapped, guards are registered in the
+            // core router and running them again here would double-fire.
+            if (def.beforeEnter && !this._guardsInCoreRouter) {
                 const cached = this._cache.get(targetTabKey, cacheKey);
                 const lcForGuard = cached?.lc ?? createPageLifecycle();
                 const guardResult = await Promise.resolve(
-                    def.beforeEnter({ lc: lcForGuard, params }),
+                    def.beforeEnter({ lc: lcForGuard, params, query: router.query.value }),
                 );
                 const parsed = _parseGuardResult(guardResult);
                 if (!parsed.allow) {
-                    if (parsed.redirect) nixRouter().replace(parsed.redirect);
+                    if (parsed.redirect) {
+                        // Clear any stale pending nav before redirecting so the
+                        // only pending nav after this is the one triggered by
+                        // the redirect itself (which is legitimate).
+                        this._pendingNav = null;
+                        nixRouter().replace(parsed.redirect);
+                        // Don't mark as cancelled — the redirect enqueued a
+                        // new pending nav via the effect that should process.
+                    } else {
+                        // Pure cancel (no redirect) — drop pending navs.
+                        transitionCancelled = true;
+                    }
                     return;
                 }
             }
@@ -452,19 +700,58 @@ export class IonRouterOutlet extends NixComponent {
             // Resolve entering page
             let enteringEl: HTMLElement;
             let isNewlyMounted = false;
-            const cached = this._enableCache
+
+            // Determine if this route should be cached
+            const routeCacheOpt = this._routeCachePolicies.get(def.path);
+            const routeCacheDisabled = routeCacheOpt === false;
+            const shouldCache = this._enableCache && !routeCacheDisabled;
+
+            const cached = shouldCache
                 ? this._cache.get(targetTabKey, cacheKey)
                 : undefined;
 
             if (cached) {
                 _resetCachedPageState(cached.pageEl);
+                // Remove ion-page-hidden (added by _hideInactivePages when the
+                // page was cached) so Ionic's commit() can show it. Keep
+                // ion-page-invisible to prevent flash before the transition.
+                cached.pageEl.classList.remove("ion-page-hidden");
+                cached.pageEl.style.removeProperty("display");
                 cached.pageEl.classList.add("ion-page-invisible");
                 enteringEl = cached.pageEl;
             } else {
                 const { pageEl, lc } = this._createPageEl();
-                const cleanup = this._mountComponent(pageEl, def, { lc, params });
-                if (this._enableCache) {
-                    this._cache.set(targetTabKey, cacheKey, { pageEl, lc, cleanup, cacheKey });
+                const cleanup = this._mountComponent(pageEl, def, { lc, params, query });
+                if (shouldCache) {
+                    const now = Date.now();
+                    const routePolicy = (routeCacheOpt && typeof routeCacheOpt === "object")
+                        ? routeCacheOpt
+                        : null;
+                    const effectivePolicy = routePolicy ?? this._cachePolicy;
+                    const ttl = effectivePolicy.ttl;
+                    const view: CachedView = {
+                        pageEl, lc, cleanup, cacheKey,
+                        lastAccessed: now,
+                        createdAt: now,
+                        routePath: def.path,
+                        routePolicy,
+                        ttlTimer: ttl ? setTimeout(() => {
+                            // TTL expired — evict if still in cache and not active
+                            if (this._activeCacheKey !== cacheKey || this._activeTabKey !== targetTabKey) {
+                                this._cache.delete(targetTabKey, cacheKey);
+                                try { cleanup(); } catch { /* ignore */ }
+                                if (pageEl.parentElement) pageEl.remove();
+                            }
+                        }, ttl) : null,
+                    };
+                    this._cache.set(targetTabKey, cacheKey, view);
+                    // Enforce max after inserting
+                    if (this._cachePolicy.max) {
+                        this._cache.enforcePolicy(targetTabKey, this._cachePolicy, this._routeCachePolicies);
+                    }
+                } else {
+                    // cache:false — track cleanup so it runs when the page leaves.
+                    _uncachedCleanups.set(pageEl, cleanup);
                 }
                 enteringEl = pageEl;
                 isNewlyMounted = true;
@@ -532,6 +819,16 @@ export class IonRouterOutlet extends NixComponent {
             this._activeCacheKey = cacheKey;
             this._activeTabKey = targetTabKey;
 
+            // Remove the invisible/hidden classes that were added when reusing
+            // a cached page. Ionic's commit() may remove them during animation,
+            // but with reduced-motion or duration-0 transitions they can persist.
+            enteringEl.classList.remove("ion-page-invisible");
+            enteringEl.classList.remove("ion-page-hidden");
+            enteringEl.style.removeProperty("display");
+            // Ensure the entering page has a higher z-index than the leaving
+            // page. Ionic's commit() with reduced-motion may not swap z-index.
+            const leavingZ = leavingEl ? parseInt(getComputedStyle(leavingEl).zIndex, 10) || 0 : 0;
+            enteringEl.style.zIndex = String(leavingZ + 1);
             this._hideInactivePages(enteringEl);
 
             // Ionic docs: DidLeave fires AFTER DidEnter (after the new
@@ -541,17 +838,48 @@ export class IonRouterOutlet extends NixComponent {
                 _dispatchIonicLifecycle(leavingEl, "ionViewDidLeave");
             }
 
-            if (!this._enableCache && leavingEl.parentElement === outletEl) {
+            // If the leaving page is not in the cache (either because cache is
+            // disabled OR because it was invalidated while active), run its
+            // cleanup before removing the DOM node, otherwise effects/lifecycle
+            // watchers leak.
+            const leavingCleanup = _uncachedCleanups.get(leavingEl);
+            if (leavingCleanup && leavingEl.parentElement === outletEl) {
+                leavingCleanup();
+                _uncachedCleanups.delete(leavingEl);
+                leavingEl.remove();
+            } else if (!this._enableCache && leavingEl.parentElement === outletEl) {
                 leavingEl.remove();
             }
         } finally {
             this._isTransitioning = false;
+            if (this._nav) this._nav.endTransition();
 
-            if (this._pendingNav) {
-                const next = this._pendingNav;
-                this._pendingNav = null;
-                const router = nixRouter();
-                void this._transitionTo(next.path, router.intent.value);
+            // Determine the effective direction for afterNav hooks
+            const effectiveDirection = this._stacks.apply(targetPath, intent);
+
+            // Run afterNav and tabChange hooks
+            if (this._nav && !transitionCancelled) {
+                this._nav.runAfterNav(targetPath, effectiveDirection);
+                this._nav.runTabChangeIfNeeded(targetPath);
+                this._nav.updateCanGoBack();
+            }
+
+            // Only process pending nav if the current transition succeeded.
+            // A cancelled/failed transition (guard reject, route not found)
+            // must NOT blindly replay a stale pending nav — the router state
+            // may have already moved (e.g. redirect) and the pending path
+            // could be inconsistent with the new current.
+            const pending = this._nav ? this._nav.consumePendingNav() : this._pendingNav;
+            if (!this._nav) this._pendingNav = null;
+
+            if (pending && !transitionCancelled) {
+                // Re-validate against current router state before processing.
+                const currentRouter = nixRouter();
+                if (pending.path === currentRouter.current.value) {
+                    void this._transitionTo(pending.path, pending.intent);
+                }
+            } else if (transitionCancelled && this._nav) {
+                this._nav.clearPendingNav();
             }
         }
     }
@@ -589,26 +917,64 @@ export class IonRouterOutlet extends NixComponent {
                 parent.insertBefore(outletEl, before);
 
                 const router: Router = nixRouter();
-                let lastSeenPath: string | null = null;
+                let lastSeenNavKey: string | null = null;
                 let initialDeferred = false;
 
                 self._routeEffectDisposer = effect(() => {
                     const path = router.current.value;
                     const intent = router.intent.value;
+                    // Observe query so query-only navigation (same path, different
+                    // query) triggers a transition. The nav key combines path +
+                    // serialized query; reading router.query.value subscribes
+                    // the effect to query changes.
+                    const query = router.query.value;
+                    const queryStr = Object.keys(query).length > 0
+                        ? "?" + Object.keys(query).sort().map(
+                            (k) => `${encodeURIComponent(k)}=${encodeURIComponent(query[k])}`,
+                        ).join("&")
+                        : "";
+                    const navKey = path + queryStr;
 
                     if (!initialDeferred) {
                         initialDeferred = true;
                         queueMicrotask(() => {
                             const settledPath = router.current.value;
                             const settledIntent = router.intent.value;
-                            lastSeenPath = settledPath;
+                            const settledQuery = router.query.value;
+                            const settledQueryStr = Object.keys(settledQuery).length > 0
+                                ? "?" + Object.keys(settledQuery).sort().map(
+                                    (k) => `${encodeURIComponent(k)}=${encodeURIComponent(settledQuery[k])}`,
+                                ).join("&")
+                                : "";
+                            lastSeenNavKey = settledPath + settledQueryStr;
                             void self._transitionTo(settledPath, settledIntent);
                         });
                         return;
                     }
 
-                    if (path === lastSeenPath) return;
-                    lastSeenPath = path;
+                    if (navKey === lastSeenNavKey) {
+                        // The router sets intent.value before current.value,
+                        // which can trigger the effect with a stale path.
+                        // If the intent indicates a pop (hashchange back),
+                        // defer to a microtask to read the settled path.
+                        if (intent.action === "pop" && intent.direction === "none") {
+                            queueMicrotask(() => {
+                                const settledPath = router.current.value;
+                                const settledQuery = router.query.value;
+                                const settledQueryStr = Object.keys(settledQuery).length > 0
+                                    ? "?" + Object.keys(settledQuery).sort().map(
+                                        (k) => `${encodeURIComponent(k)}=${encodeURIComponent(settledQuery[k])}`,
+                                    ).join("&")
+                                    : "";
+                                const settledNavKey = settledPath + settledQueryStr;
+                                if (settledNavKey === lastSeenNavKey) return;
+                                lastSeenNavKey = settledNavKey;
+                                void self._transitionTo(settledPath, router.intent.value);
+                            });
+                        }
+                        return;
+                    }
+                    lastSeenNavKey = navKey;
                     void self._transitionTo(path, intent);
                 });
 
@@ -620,6 +986,14 @@ export class IonRouterOutlet extends NixComponent {
                         if (view.pageEl.parentElement) view.pageEl.remove();
                     }
                     self._cache.clear();
+                    // cache:false active page — run its cleanup too.
+                    if (self._activePageEl) {
+                        const activeCleanup = _uncachedCleanups.get(self._activePageEl);
+                        if (activeCleanup) {
+                            activeCleanup();
+                            _uncachedCleanups.delete(self._activePageEl);
+                        }
+                    }
                     self._activePageEl = null;
                     self._activeCacheKey = null;
                     self._activeTabKey = null;
@@ -634,19 +1008,32 @@ export class IonRouterOutlet extends NixComponent {
         routePath: string,
         params?: Record<string, string>,
         tabKey?: string,
+        query?: Record<string, string>,
     ): void {
-        const key = params ? _buildCacheKey(routePath, params) : routePath;
+        const key = (params || query)
+            ? _buildCacheKey(routePath, params ?? {}, query)
+            : routePath;
         const targetTabKey = tabKey ?? this._stacks.keyForPath(routePath);
         const cached = this._cache.get(targetTabKey, key);
         if (!cached) return;
+
+        if (cached.pageEl === this._activePageEl) {
+            // Active page: do NOT dispose reactivity or remove DOM — that would
+            // leave a visible-but-dead view. Just drop the cache entry so the
+            // next visit remounts a fresh instance. Move the cleanup to the
+            // uncached tracker so the normal transition path disposes it when
+            // the user navigates away.
+            _uncachedCleanups.set(cached.pageEl, cached.cleanup);
+            this._cache.delete(targetTabKey, key);
+            this._activeCacheKey = null;
+            return;
+        }
+
         cached.cleanup();
-        if (cached.pageEl !== this._activePageEl && cached.pageEl.parentElement) {
+        if (cached.pageEl.parentElement) {
             cached.pageEl.remove();
         }
         this._cache.delete(targetTabKey, key);
-        if (key === this._activeCacheKey && targetTabKey === this._activeTabKey) {
-            this._activeCacheKey = null;
-        }
     }
 
     clearCache(): void {
@@ -658,5 +1045,27 @@ export class IonRouterOutlet extends NixComponent {
             if (view.pageEl.parentElement) view.pageEl.remove();
             this._cache.delete(tabKey, cacheKey);
         }
+    }
+
+    /**
+     * Clear all cached pages for a specific tab. Useful when leaving a tab
+     * permanently or for memory management.
+     */
+    clearTabCache(tabKey: string): void {
+        const entries: Array<{ tabKey: string; cacheKey: string; view: CachedView }> = [];
+        for (const e of this._cache.all()) {
+            if (e.tabKey === tabKey) entries.push(e);
+        }
+        for (const { tabKey, cacheKey, view } of entries) {
+            if (view.pageEl === this._activePageEl) continue;
+            view.cleanup();
+            if (view.pageEl.parentElement) view.pageEl.remove();
+            this._cache.delete(tabKey, cacheKey);
+        }
+    }
+
+    /** The NavigationManager used by this outlet (if any). */
+    get navigation(): NavigationManager | null {
+        return this._nav;
     }
 }

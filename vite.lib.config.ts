@@ -1,17 +1,25 @@
 import { defineConfig } from "vite";
 import { resolve } from "path";
+import { readdirSync } from "fs";
 
 // ── Library build configuration ───────────────────────────────────────────────
 //
 //   npm run build:lib
 //
 // Produces:
-//   dist/lib/nix-ionic.js    — ES module  (primary)
-//   dist/lib/nix-ionic.cjs   — CommonJS   (legacy Node.js / bundlers)
-//   dist/lib/components.js   — Individual component re-exports
-//   dist/lib/bundles/*.js    — Category bundles
-//   dist/lib/tabs.js         — Bottom tab helpers
-//   dist/lib/*.d.ts          — Type declarations (generated separately by tsc)
+//   dist/lib/nix-ionic.js         — ES module  (primary)
+//   dist/lib/nix-ionic.cjs        — CommonJS   (legacy Node.js / bundlers)
+//   dist/lib/components.js        — Component barrel re-exports
+//   dist/lib/components/manifest.js — Typed manifest
+//   dist/lib/components/<name>.js — Direct subpath per component (tree-shakeable)
+//   dist/lib/bundles/*.js         — Category bundles
+//   dist/lib/tabs.js              — Bottom tab helpers
+//   dist/lib/*.d.ts               — Type declarations (generated separately by tsc)
+
+// Auto-discover individual component entry files
+const componentFiles = readdirSync(resolve("src/components"))
+    .filter((f) => f.endsWith(".ts") && f !== "manifest.ts")
+    .map((f) => f.replace(/\.ts$/, ""));
 
 export default defineConfig({
     // Do not copy the public/ folder into the library output
@@ -27,6 +35,7 @@ export default defineConfig({
             entry: {
                 "nix-ionic": resolve("src/index.ts"),
                 "components": resolve("src/components.ts"),
+                "components/manifest": resolve("src/components/manifest.ts"),
                 "bundles/layout": resolve("src/bundles/layout.ts"),
                 "bundles/forms": resolve("src/bundles/forms.ts"),
                 "bundles/lists": resolve("src/bundles/lists.ts"),
@@ -36,6 +45,18 @@ export default defineConfig({
                 "bundles/navigation": resolve("src/bundles/navigation.ts"),
                 "bundles/all": resolve("src/bundles/all.ts"),
                 "tabs": resolve("src/tabs.ts"),
+                "overlays": resolve("src/overlays.ts"),
+                "vite-plugin": resolve("src/vite-plugin.ts"),
+                "capacitor": resolve("src/capacitor.ts"),
+                "page-state": resolve("src/page-state.ts"),
+                "navigation": resolve("src/navigation.ts"),
+                // Per-component direct subpaths
+                ...Object.fromEntries(
+                    componentFiles.map((name) => [
+                        `components/${name}`,
+                        resolve(`src/components/${name}.ts`),
+                    ]),
+                ),
             },
             formats: ["es", "cjs"],
             fileName: (format, entryName) =>
@@ -43,7 +64,7 @@ export default defineConfig({
         },
 
         rollupOptions: {
-            // nix-ionic depends on nix-js
+            // nix-ionic depends on nix-js, @ionic/core, and ionicons (all peer deps)
             external: ["@deijose/nix-js", /^@ionic\/core.*/, /^ionicons.*/],
             output: {
                 // Preserve module structure for better tree-shaking in ES builds

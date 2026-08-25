@@ -1,12 +1,15 @@
 /**
  * All components bundle — convenience re-export of every bundle.
  *
- * Use this to register ALL components at once (same behavior as v0.2.x):
+ * @deprecated Prefer individual imports, direct subpaths, or the Vite plugin
+ * auto-registration. This bundle forces ALL components into the importing
+ * chunk and defeats tree-shaking. Kept for migration convenience only.
+ *
  * ```ts
  * import { setupNixIonic } from "@deijose/nix-ionic";
  * import { allComponents } from "@deijose/nix-ionic/bundles/all";
  *
- * setupNixIonic({ components: allComponents });
+ * setupNixIonic({ components: allComponents }); // ⚠ not recommended
  * ```
  */
 import type { ComponentDefiner } from "../setup";

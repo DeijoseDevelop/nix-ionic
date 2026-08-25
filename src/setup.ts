@@ -1,16 +1,32 @@
 /**
- * @deijose/nix-ionic / setup.ts  —  v2
+ * @deijose/nix-ionic / setup.ts — v2 modular setup
  *
- * BREAKING vs v1: <ion-router> and <ion-route> are NO LONGER registered
- * automatically. The single-router architecture doesn't use them — all
- * routing goes through the core router. Removing the imports also drops
- * a few KB from the bundle.
+ * Architecture (Nix Ionic 2):
  *
- * If you previously declared <ion-router> directly in your HTML or built
- * a custom layer on top of it, you now need to register it yourself by
- * passing `defineIonRouter` and `defineIonRoute` to `setupNixIonic` via the
- * `components` option. This is intentional — the lib should not pay the
- * cost of components nobody uses anymore.
+ *   initializeNixIonic(options)   — configures Ionic Core once; returns a
+ *                                    handle with status/diagnostics. Safe to
+ *                                    call again (no-op after first init, but
+ *                                    validates incompatible config changes).
+ *
+ *   registerIonicComponents(...definers)  — incremental & idempotent. Always
+ *                                    registers new definers, skips already-
+ *                                    registered custom elements. Works for
+ *                                    lazy route loading.
+ *
+ *   registerIonicons(map)         — incremental with collision diagnostics.
+ *                                    Merges new icons into the global set;
+ *                                    warns on name collisions.
+ *
+ *   setupNixIonic(options)        — backward-compatible facade that calls all
+ *                                    three. Existing apps work unchanged.
+ *
+ * Key changes vs v1.x:
+ *   - No more `isInitialized` blocking: `registerIonicComponents` and
+ *     `registerIonicons` are always incremental.
+ *   - No `unpkg@latest` default asset path: uses official `setAssetPath` from
+ *     ionicons. CDN is opt-in only.
+ *   - SSR-safe: no `window` access at module load; guards in each function.
+ *   - Returns a handle with diagnostics from `initializeNixIonic`.
  */
 
 import { initialize } from "@ionic/core/components";
@@ -22,82 +38,219 @@ import { defineCustomElement as defineIonBackButton } from "@ionic/core/componen
 
 // Icons
 import { defineCustomElement as defineIonIcon } from "ionicons/components/ion-icon.js";
-import { addIcons } from "ionicons";
+import { addIcons, setAssetPath } from "ionicons";
 import { arrowBack, arrowBackSharp, chevronBack, chevronBackSharp } from "ionicons/icons";
 
 export type ComponentDefiner = () => void;
 export type IconDefinitionMap = Record<string, string>;
 
 export interface SetupNixIonicOptions {
+    /** @deprecated Use `icons` mode in `initializeNixIonic` instead. */
     iconAssetPath?: string;
     components?: ComponentDefiner[];
     icons?: IconDefinitionMap;
 }
 
-let isInitialized = false;
-
-/**
- * Initialize Ionic Core for Nix.js.
- *
- * Only the minimal set is registered automatically:
- *   - ion-app
- *   - ion-router-outlet  (motor de animación; usado por IonRouterOutlet)
- *   - ion-back-button    (envuelto por IonBackButton)
- *   - ion-icon
- *
- * Pass extra Ionic components explicitly:
- *
- * ```ts
- * import { setupNixIonic } from "@deijose/nix-ionic";
- * import { layoutComponents } from "@deijose/nix-ionic/bundles/layout";
- * import { home, homeOutline } from "ionicons/icons";
- *
- * setupNixIonic({
- *   components: [...layoutComponents],
- *   icons: { home, "home-outline": homeOutline },
- * });
- * ```
- */
-export function setupNixIonic(options: SetupNixIonicOptions = {}) {
-    if (isInitialized) return;
-
-    const assetPath =
-        options.iconAssetPath ||
-        "https://unpkg.com/ionicons@latest/dist/ionicons/svg/";
-    (window as any).ionicons = { assets: assetPath };
-
-    initialize();
-
-    const coreComponents: ComponentDefiner[] = [
-        defineIonApp,
-        defineIonRouterOutlet,
-        defineIonBackButton,
-        defineIonIcon,
-    ];
-
-    for (let i = 0; i < coreComponents.length; i++) {
-        coreComponents[i]();
-    }
-
-    if (options.components) {
-        for (let i = 0; i < options.components.length; i++) {
-            options.components[i]();
-        }
-    }
-
-    const defaultIcons: IconDefinitionMap = {
-        "arrow-back": arrowBack,
-        "arrow-back-sharp": arrowBackSharp,
-        "chevron-back": chevronBack,
-        "chevron-back-sharp": chevronBackSharp,
-    };
-
-    addIcons({
-        ...defaultIcons,
-        ...(options.icons ?? {}),
-    });
-
-    isInitialized = true;
+export interface InitializeOptions {
+    /**
+     * Icon asset strategy:
+     * - "inline" (default): icons are inlined via addIcons; no remote fetch.
+     * - "assets": use setAssetPath to a local URL; icons fetched on demand.
+     * - object with `mode: "assets"` and `path` for explicit local path.
+     */
+    icons?: "inline" | "assets" | { mode: "assets"; path: string };
+    /** Ionic mode override: "ios" | "md" | undefined (auto-detect). */
+    mode?: "ios" | "md";
 }
 
-export { addIcons };
+export interface SetupHandle {
+    /** True if this call performed the initialization; false if already init. */
+    readonly initialized: boolean;
+    /** Diagnostics collected during initialization. */
+    readonly diagnostics: string[];
+}
+
+// --- Internal registry state ---
+
+const _coreDefiners: ComponentDefiner[] = [
+    defineIonApp,
+    defineIonRouterOutlet,
+    defineIonBackButton,
+    defineIonIcon,
+];
+
+const _defaultIcons: IconDefinitionMap = {
+    "arrow-back": arrowBack,
+    "arrow-back-sharp": arrowBackSharp,
+    "chevron-back": chevronBack,
+    "chevron-back-sharp": chevronBackSharp,
+};
+
+let _initialized = false;
+const _registeredIconNames = new Set<string>();
+
+function _hasWindow(): boolean {
+    return typeof window !== "undefined";
+}
+
+function _hasCustomElements(): boolean {
+    return typeof customElements !== "undefined";
+}
+
+/**
+ * Initialize Ionic Core for Nix.js. Configures the runtime once.
+ *
+ * Subsequent calls are no-ops for the core init, but `registerIonicComponents`
+ * and `registerIonicons` remain incremental regardless.
+ *
+ * Returns a handle with diagnostics.
+ */
+export function initializeNixIonic(options: InitializeOptions = {}): SetupHandle {
+    const diagnostics: string[] = [];
+
+    if (!_hasWindow()) {
+        // SSR/prerender: do not touch DOM. Module is import-safe.
+        return { initialized: false, diagnostics: ["SSR: window unavailable, skipping init"] };
+    }
+
+    if (_initialized) {
+        // Validate incompatible config changes after init.
+        if (options.mode) {
+            diagnostics.push("mode cannot be changed after initialization; ignoring");
+        }
+        return { initialized: false, diagnostics };
+    }
+
+    // Icon asset strategy
+    const iconsCfg = options.icons ?? "inline";
+    if (iconsCfg === "inline") {
+        // Default: no remote asset path. Icons are inlined via addIcons.
+        // setAssetPath to empty string prevents any CDN fetch.
+        setAssetPath("");
+    } else if (typeof iconsCfg === "object" && iconsCfg.mode === "assets") {
+        setAssetPath(iconsCfg.path);
+    } else if (iconsCfg === "assets") {
+        // "assets" mode without explicit path — use a sensible default
+        // relative to the document base.
+        const base = document.baseURI || "/";
+        setAssetPath(new URL("assets/icons/", base).href);
+    }
+
+    // Initialize Ionic Core
+    initialize();
+
+    // Register minimal core components
+    for (const definer of _coreDefiners) {
+        definer();
+    }
+
+    // Register default back icons (used by IonBackButton)
+    addIcons(_defaultIcons);
+    for (const name of Object.keys(_defaultIcons)) {
+        _registeredIconNames.add(name);
+    }
+
+    _initialized = true;
+
+    return { initialized: true, diagnostics };
+}
+
+/**
+ * Register additional Ionic custom element definers. Incremental and
+ * idempotent — always processes new definers, safe to call from lazy routes.
+ *
+ * @example
+ * ```ts
+ * // In a lazy route module:
+ * import { defineCustomElement as defineIonDatetime } from "@ionic/core/components/ion-datetime.js";
+ * registerIonicComponents(defineIonDatetime);
+ * ```
+ */
+export function registerIonicComponents(...definers: ComponentDefiner[]): void {
+    if (!_hasCustomElements()) {
+        if (_hasWindow()) {
+            console.warn("[nix-ionic] customElements unavailable; cannot register components");
+        }
+        return;
+    }
+
+    for (const definer of definers) {
+        try {
+            definer();
+        } catch (e) {
+            // Ionic definers internally guard against double-registration,
+            // but we catch just in case.
+            if (e instanceof Error && !e.message.includes("already been registered")) {
+                console.warn(`[nix-ionic] Component registration error: ${e.message}`);
+            }
+        }
+    }
+}
+
+/**
+ * Register additional Ionicons by name → SVG string mapping. Incremental
+ * with collision diagnostics.
+ *
+ * @example
+ * ```ts
+ * import { registerIonicons } from "@deijose/nix-ionic";
+ * import { home, homeOutline } from "ionicons/icons";
+ *
+ * registerIonicons({ home, "home-outline": homeOutline });
+ * ```
+ */
+export function registerIonicons(map: IconDefinitionMap): void {
+    if (!_hasWindow()) {
+        return;
+    }
+
+    const toAdd: IconDefinitionMap = {};
+    for (const [name, svg] of Object.entries(map)) {
+        if (_registeredIconNames.has(name)) {
+            // Overwriting is allowed (addIcons merges), but warn in dev.
+            console.warn(`[nix-ionic] Icon "${name}" already registered; overwriting.`);
+        }
+        toAdd[name] = svg;
+        _registeredIconNames.add(name);
+    }
+
+    if (Object.keys(toAdd).length > 0) {
+        addIcons(toAdd);
+    }
+}
+
+/**
+ * Backward-compatible facade. Calls `initializeNixIonic`, then registers
+ * any extra components and icons passed via options.
+ *
+ * Existing v1.x apps work unchanged. New apps should prefer the granular
+ * functions (`initializeNixIonic` + `registerIonicComponents` + `registerIonicons`)
+ * for lazy loading and HMR support.
+ *
+ * @deprecated Prefer `initializeNixIonic` + `registerIonicComponents` + `registerIonicons` for new code.
+ */
+export function setupNixIonic(options: SetupNixIonicOptions = {}): void {
+    if (!_hasWindow()) return;
+
+    // Map old options to new init
+    const initOpts: InitializeOptions = {};
+    if (options.iconAssetPath) {
+        initOpts.icons = { mode: "assets", path: options.iconAssetPath };
+    }
+
+    const handle = initializeNixIonic(initOpts);
+
+    // Register extra components (always incremental, even after init)
+    if (options.components) {
+        registerIonicComponents(...options.components);
+    }
+
+    // Register extra icons (always incremental, even after init)
+    if (options.icons) {
+        registerIonicons(options.icons);
+    }
+
+    void handle;
+}
+
+export { addIcons, setAssetPath };
