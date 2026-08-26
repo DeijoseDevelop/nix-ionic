@@ -10,11 +10,11 @@
  * ```ts
  * // vite.config.ts
  * import { defineConfig } from "vite";
- * import { nix } from "@deijose/vite-plugin-nix";
+ * import nixJs from "@deijose/vite-plugin-nix-js";
  * import { nixIonic } from "@deijose/nix-ionic/vite-plugin";
  *
  * export default defineConfig({
- *   plugins: [nix(), nixIonic()],
+ *   plugins: [nixJs(), nixIonic()],
  * });
  * ```
  *
