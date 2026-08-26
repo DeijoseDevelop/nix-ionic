@@ -184,7 +184,7 @@
     "@capacitor/keyboard": "^8.0.5",
     "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.3",
-    "@deijose/nix-js": "3.2.1",
+    "@deijose/nix-js": "3.5.0",
     "@deijose/nix-js-testing": "^0.1.4",
     "@ionic/core": "^8.8.1",
     "@playwright/test": "^1.62.1",
